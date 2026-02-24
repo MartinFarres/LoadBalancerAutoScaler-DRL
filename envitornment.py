@@ -7,17 +7,19 @@ class LoadBalancerEnv(gym.Env):
     Entorno PPO para Balanceo de Carga y Auto-scaling (LBDRL).
     """
     
-    def __init__(self, n_max=10):
+    def __init__(self, n_max=10, max_steps=100, max_memory=1024):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
+        self.max_steps = max_steps
+        self.max_memory = max_memory 
         
         # OBSERVATION SPACE
-        # Por cada contenedor: [CPU, RAM, Tiempo_Respuesta, Tasa_Errores, Is_Active]
+        # Por cada contenedor: [CPU, RAM, MEM, Tiempo_Respuesta, Tasa_Errores, Is_Active]
         # Todos los valores normalizados entre 0.0 y 1.0
         self.observation_space = spaces.Box(
             low=0.0, 
             high=1.0, 
-            shape=(self.n_max * 5,), 
+            shape=(self.n_max * 6,), 
             dtype=np.float32
         )
         
@@ -34,7 +36,7 @@ class LoadBalancerEnv(gym.Env):
         
         # Estado interno de la infraestructura simulada/real
         self.contenedores_activos = np.zeros(self.n_max, dtype=bool)
-        self.estado_actual = np.zeros(self.n_max * 5, dtype=np.float32)
+        self.estado_actual = np.zeros(self.n_max * 6, dtype=np.float32)
 
     def reset(self, seed=None, options=None):
         """Reinicia el entorno, apagando el cluster y dejando 1 solo nodo activo."""
@@ -124,23 +126,38 @@ class LoadBalancerEnv(gym.Env):
 
     def get_metrics(self):
         """Consulta el estado de la infraestructura y arma el vector de observaciones."""
-        nuevo_estado = np.zeros(self.n_max * 5, dtype=np.float32)
+        nuevo_estado = np.zeros(self.n_max * 6, dtype=np.float32)
         
         for i in range(self.n_max):
             if self.contenedores_activos[i]:
-                # TODO: Aquí va la llamada al Docker SDK o API REST para leer métricas reales
-                # Simulación de lectura de datos (valores dummy):
-                cpu = np.random.uniform(0.1, 0.9)
-                ram = np.random.uniform(0.2, 0.8)
+                # TODO: Reemplazar con lectura real de Docker SDK
+
+                # Simulación:
+                cpu_pct = np.random.uniform(0.1, 0.9)
+                ram_pct = np.random.uniform(0.2, 0.8)
+                
+                # Supongamos que este contenedor tiene 512MB de límite real
+                ram_total_mb = 512.0 
+                
+                # Normalizamos dividiendo por el máximo permitido en el clúster
+                ram_total_norm = ram_total_mb / self.MAX_MEM_MB 
+                
                 tiempo_respuesta = np.random.uniform(0.01, 0.15)
                 errores = 0.0
                 status = 1.0
                 
-                # Mapear las 5 métricas al vector plano
-                idx_base = i * 5
-                nuevo_estado[idx_base : idx_base+5] = [cpu, ram, tiempo_respuesta, errores, status]
+                # Mapear las 6 métricas al vector plano
+                idx_base = i * 6
+                nuevo_estado[idx_base : idx_base+6] = [
+                    cpu_pct, 
+                    ram_pct, 
+                    ram_total_norm, 
+                    tiempo_respuesta, 
+                    errores, 
+                    status
+                ]
             else:
-                # Nodos apagados permanecen en ceros estrictos
+                # Los nodos apagados mantienen sus 6 valores en 0.0
                 pass 
                 
         return nuevo_estado
