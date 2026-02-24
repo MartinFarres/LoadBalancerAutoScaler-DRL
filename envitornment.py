@@ -4,7 +4,7 @@ import numpy as np
 
 class LoadBalancerEnv(gym.Env):
     """
-    Entorno PPO para Balanceo de Carga y Auto-scaling (LBDRL).
+    Entorno PPO para Balanceo de Carga y Auto-scaling (LBDRL)
     """
     
     def __init__(self, n_max=10, max_steps=100, max_memory=1024):
@@ -25,7 +25,7 @@ class LoadBalancerEnv(gym.Env):
         
         # ACTION SPACE
         # N_max valores para pesos de ruteo + 1 valor para decisión de auto-scaling. 
-        # [w1, w2, ..., wN, decision_escalado]
+        # [w1, w2, ..., wN, scale_desition]
         # Rango 0.0 a 1.0.
         self.action_space = spaces.Box(
             low=0.0, 
@@ -34,102 +34,98 @@ class LoadBalancerEnv(gym.Env):
             dtype=np.float32
         )
         
-        # Estado interno de la infraestructura simulada/real
-        self.contenedores_activos = np.zeros(self.n_max, dtype=bool)
-        self.estado_actual = np.zeros(self.n_max * 6, dtype=np.float32)
+        self.active_containers = np.zeros(self.n_max, dtype=bool)
+        self.actual_state = np.zeros(self.n_max * 6, dtype=np.float32)
 
     def reset(self, seed=None, options=None):
-        """Reinicia el entorno, apagando el cluster y dejando 1 solo nodo activo."""
+        """Reinicia el entorno, apagando el cluster y dejando 1 solo nodo activo"""
         super().reset(seed=seed)
         
-        self.contenedores_activos = np.zeros(self.n_max, dtype=bool)
-        self.contenedores_activos[0] = True # Nodo principal siempre vivo al inicio
+        self.active_containers = np.zeros(self.n_max, dtype=bool)
+        self.active_containers[0] = True # Nodo principal siempre vivo al inicio
         
         # TODO: Llamada al backend para hacer un reset real
         # ej: request.post("http://localhost:5000/api/cluster/reset")
         
-        self.estado_actual = self.get_metrics()
+        self.actual_state = self.get_metrics()
         info = {"mensaje": "Cluster reiniciado a 1 instancia"}
         
-        return self.estado_actual, info
+        return self.actual_state, info
 
     def step(self, action):
-        """Avanza un instante de tiempo en el MDP."""
-        # 1. Desempaquetar la accion generada por la red neuronal
-        pesos_crudos = action[:self.n_max]
-        decision_escalado = action[-1]
+        """Avanza un instante de tiempo en el MDP"""
+
+        raw_weights = action[:self.n_max]
+        scale_desition = action[-1]
         
-        # 2. Gestionar el Auto-scaling (Thresholds: <0.3 baja, >0.7 sube) <-- Estos valores pueden ser hiperparametros a ajustar
-        if decision_escalado > 0.7:
+        
+        if scale_desition > 0.7: # <- se puede ajustar
             self.scale_up()
-        elif decision_escalado < 0.3:
+        elif scale_desition < 0.3: # <- se puede ajustar
             self.scale_down()
             
-        # 3. Aplicar Balanceo de Carga (Action Masking + Normalización)
-        self.re_balance_traffick(pesos_crudos)
+        # Balanceo de Carga
+        self.re_balance_traffick(raw_weights)
         
-        # 4. Esperar / Procesar
-        # Entorno real: time.sleep(2) o se espera el batch de requests
-        # En simulacion: se calculan las colas matematicamente.
+        # Esperar / Procesar
         
-        # 5. Observar el impacto de nuestras acciones
-        self.estado_actual = self.get_metrics()
+        self.actual_state = self.get_metrics()
         
-        # 6. Calcular Recompensa
-        recompensa = self.reward_function(self.estado_actual, action)
+        reward = self.reward_function(self.actual_state, action)
         
-        # 7. Condiciones de término (todos los contenedores cayeron)
-        terminated = not np.any(self.contenedores_activos)
-        truncated = False # Se usa si definimos un MaxStepsPerEpisode
+        # Condiciones de término (todos los contenedores cayeron)
+        terminated = not np.any(self.active_containers)
+        truncated = False # Se usa si definimos un max_steps
         
-        info = {"activos": np.sum(self.contenedores_activos)}
+        info = {"activos": np.sum(self.active_containers)}
         
-        return self.estado_actual, recompensa, terminated, truncated, info
+        return self.actual_state, reward, terminated, truncated, info
 
     def scale_up(self):
-        """Encuentra el primer slot libre y levanta un contenedor."""
-        inactivos = np.where(~self.contenedores_activos)[0]
-        if len(inactivos) > 0:
-            idx_nuevo = inactivos[0]
-            self.contenedores_activos[idx_nuevo] = True
+        """Encuentra el primer slot libre y levanta un contenedor"""
+        off_containers = np.where(~self.active_containers)[0]
+        if len(off_containers) > 0:
+            idx_nuevo = off_containers[0]
+            self.active_containers[idx_nuevo] = True
             # TODO: Llamada a Docker SDK para encender contenedor idx_nuevo
             # print(f"[Scaler] Levantando nodo {idx_nuevo}")
 
     def scale_down(self):
-        """Apaga el último contenedor activo (protegiendo el nodo 0)."""
-        activos = np.where(self.contenedores_activos)[0]
-        if len(activos) > 1: # Prevenimos apagar todo el cluster
-            idx_apagar = activos[-1]
-            self.contenedores_activos[idx_apagar] = False
+        """Apaga el último contenedor activo (protegiendo el nodo 0)"""
+        on_containers = np.where(self.active_containers)[0]
+        if len(on_containers) > 1: # Prevenimos apagar todo el cluster
+            idx_apagar = on_containers[-1]
+            self.active_containers[idx_apagar] = False
             # TODO: Llamada a Docker SDK para detener contenedor idx_apagar
             # print(f"[Scaler] Apagando nodo {idx_apagar}")
 
-    def re_balance_traffick(self, pesos_crudos):
-        """Enmascara nodos muertos, normaliza pesos y reconfigura el proxy."""
-        # Aplicar máscara booleana (nodos apagados multiplican su peso por 0)
-        pesos_filtrados = pesos_crudos * self.contenedores_activos
+    def re_balance_traffick(self, raw_weights):
+        """Enmascara nodos muertos, normaliza pesos y reconfigura el proxy"""
+
+        # Aplicamos enmascaramiento -> nodos apagados = 0
+        filtered_weights = raw_weights * self.active_containers
         
-        suma_pesos = np.sum(pesos_filtrados)
-        if suma_pesos > 0:
-            pesos_finales = pesos_filtrados / suma_pesos
+        sum_weights = np.sum(filtered_weights)
+        if sum_weights > 0:
+            final_weights = filtered_weights / sum_weights
         else:
-            # Failsafe de Sistemas Operativos: si la IA escupe todo 0 por error, 
-            # hacemos un Fallback a Round Robin puro entre los nodos activos.
-            pesos_finales = np.zeros(self.n_max)
-            activos = np.where(self.contenedores_activos)[0]
-            pesos_finales[activos] = 1.0 / len(activos)
+            # Fallback a Round Robin puro entre los nodos activos.
+            final_weights = np.zeros(self.n_max)
+            activos = np.where(self.active_containers)[0]
+            final_weights[activos] = 1.0 / len(activos)
             
-        pesos_finales = np.round(pesos_finales, 4)
+        final_weights = np.round(final_weights, 4)
         
         # TODO: Actualizar pesos en Nginx via API o reescribiendo haproxy.cfg
         # print(f"[Proxy] Nuevos pesos enrutamiento: {pesos_finales}")
 
     def get_metrics(self):
-        """Consulta el estado de la infraestructura y arma el vector de observaciones."""
-        nuevo_estado = np.zeros(self.n_max * 6, dtype=np.float32)
+        """Consulta el estado de la infraestructura y arma el vector de observaciones"""
+
+        new_state = np.zeros(self.n_max * 6, dtype=np.float32)
         
         for i in range(self.n_max):
-            if self.contenedores_activos[i]:
+            if self.active_containers[i]:
                 # TODO: Reemplazar con lectura real de Docker SDK
 
                 # Simulación:
@@ -142,17 +138,17 @@ class LoadBalancerEnv(gym.Env):
                 # Normalizamos dividiendo por el máximo permitido en el clúster
                 ram_total_norm = ram_total_mb / self.MAX_MEM_MB 
                 
-                tiempo_respuesta = np.random.uniform(0.01, 0.15)
+                response_time = np.random.uniform(0.01, 0.15)
                 errores = 0.0
                 status = 1.0
                 
                 # Mapear las 6 métricas al vector plano
                 idx_base = i * 6
-                nuevo_estado[idx_base : idx_base+6] = [
+                new_state[idx_base : idx_base+6] = [
                     cpu_pct, 
                     ram_pct, 
                     ram_total_norm, 
-                    tiempo_respuesta, 
+                    response_time, 
                     errores, 
                     status
                 ]
@@ -160,11 +156,69 @@ class LoadBalancerEnv(gym.Env):
                 # Los nodos apagados mantienen sus 6 valores en 0.0
                 pass 
                 
-        return nuevo_estado
+        return new_state
 
-    def reward_function(self, estado, accion):
+    def reward_function(self, state, action):
         """
-        Calcula la puntuación del agente basándose en la latencia, 
-        errores y uso eficiente de los contenedores.
+        Calcula la recompensa evaluando latencia, errores, costo de 
+        contenedores y salud individual de cada nodo
         """
-        pass
+
+        total_reward = 0.0
+        
+        # Pesos 
+        W_LATENCY = 1.0
+        W_ERRORS = 10.0      # Errores inaceptables -> alto peso
+        W_COST = 0.2         # Queremos ahorrar, pero no somos ratas 
+        W_SATURATION = 0.5    # Penalizacion por estresar demasiado un solo nodo
+        
+        cant_active_containers = np.sum(self.active_containers)
+        
+        # El cluster esta apagado
+        if cant_active_containers == 0:
+            return -100.0 
+            
+        avg_latency = 0.0
+        total_errors = 0.0
+        
+        # Recorremos el vector de estado
+        for i in range(self.n_max):
+            if self.active_containers[i]:
+                idx_base = i * 6 # Cada nodo tiene 6 metricas consecutivas
+                cpu_pct = state[idx_base]
+                ram_pct = state[idx_base + 1]
+                latency = state[idx_base + 3]
+                errores = state[idx_base + 4]
+
+                avg_latency += latency
+                total_errors += errores
+                
+                # Riesgo de Saturación
+                # Si pasa del 85% de uso -> penalización exponencial
+                if cpu_pct > 0.85:
+                    total_reward -= W_SATURATION * ((cpu_pct - 0.85) * 10)
+                if ram_pct > 0.85:
+                    total_reward -= W_SATURATION * ((ram_pct - 0.85) * 10)
+                    
+        avg_latency /= cant_active_containers
+        
+        # Pesos Latencia y Errores
+        penalizacion_latencia = W_LATENCY * avg_latency
+        penalizacion_errores = W_ERRORS * total_errors
+        
+        # Costo de Infraestructura
+        # 1 nodo -> poco castigo | 10 nodos -> castigo máximo
+        costo_infra = W_COST * (cant_active_containers / self.n_max)
+        
+
+        # Recompensa Total = Recompensa Base (0) - Penalizaciones
+        total_reward -= (penalizacion_latencia + penalizacion_errores + costo_infra)
+        
+
+        # Evitar bucle de prendido y apagado
+        scale_decision = action[-1]
+        if scale_decision < 0.3 or scale_decision > 0.7:
+             # Pequeña penalidad por ejecutar la acción de escalar
+            total_reward -= 0.05 
+            
+        return total_reward
