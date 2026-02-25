@@ -67,8 +67,11 @@ class LoadBalancerEnv(gym.Env):
         # Balanceo de Carga
         self.re_balance_traffick(raw_weights)
         
-        # Esperar / Procesar
+
+        # Esperar / Procesar 
+        # TODO: Simulación de tiempo de procesamiento o espera real
         
+
         self.actual_state = self.get_metrics()
         
         reward = self.reward_function(self.actual_state, action)
@@ -136,7 +139,7 @@ class LoadBalancerEnv(gym.Env):
                 ram_total_mb = 512.0 
                 
                 # Normalizamos dividiendo por el máximo permitido en el clúster
-                ram_total_norm = ram_total_mb / self.MAX_MEM_MB 
+                ram_total_norm = ram_total_mb / self.max_memory 
                 
                 response_time = np.random.uniform(0.01, 0.15)
                 errores = 0.0
