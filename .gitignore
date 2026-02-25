@@ -85,7 +85,7 @@ Pipfile.lock
 # Logs
 *.log
 /logs_tensorboard
-/logs*
+/environment/logs*
 
 # Wheels
 *.whl
