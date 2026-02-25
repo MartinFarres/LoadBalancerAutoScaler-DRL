@@ -10,9 +10,10 @@ class LoadBalancerEnv(gym.Env):
     def __init__(self, n_max=10, max_steps=100, max_memory=1024):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
-        self.max_steps = max_steps
         self.max_memory = max_memory 
-        
+        self.max_steps = max_steps
+        self.current_step = 0
+
         # OBSERVATION SPACE
         # Por cada contenedor: [CPU, RAM, MEM, Tiempo_Respuesta, Tasa_Errores, Is_Active]
         # Todos los valores normalizados entre 0.0 y 1.0
@@ -43,7 +44,8 @@ class LoadBalancerEnv(gym.Env):
         
         self.active_containers = np.zeros(self.n_max, dtype=bool)
         self.active_containers[0] = True # Nodo principal siempre vivo al inicio
-        
+        self.current_step = 0
+
         # TODO: Llamada al backend para hacer un reset real
         # ej: request.post("http://localhost:5000/api/cluster/reset")
         
@@ -54,6 +56,7 @@ class LoadBalancerEnv(gym.Env):
 
     def step(self, action):
         """Avanza un instante de tiempo en el MDP"""
+        self.current_step += 1
 
         raw_weights = action[:self.n_max]
         scale_desition = action[-1]
@@ -78,9 +81,16 @@ class LoadBalancerEnv(gym.Env):
         
         # Condiciones de término (todos los contenedores cayeron)
         terminated = not np.any(self.active_containers)
-        truncated = False # Se usa si definimos un max_steps
         
-        info = {"activos": np.sum(self.active_containers)}
+        if self.current_step >= self.max_steps:
+            truncated = True 
+        else:
+            truncated = False
+        
+        info = {
+                "activos": np.sum(self.active_containers),
+                "step": self.current_step
+                }
         
         return self.actual_state, reward, terminated, truncated, info
 

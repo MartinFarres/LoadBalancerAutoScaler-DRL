@@ -84,6 +84,11 @@ Pipfile.lock
 
 # Logs
 *.log
+/logs_tensorboard
+/logs*
 
 # Wheels
 *.whl
+
+# Agent save
+# ppo_lb_agent_*.zip

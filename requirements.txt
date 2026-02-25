@@ -2,3 +2,5 @@ gymnasium
 numpy
 docker
 stable-baselines3
+tensorboard
+setuptools<70.0.0
