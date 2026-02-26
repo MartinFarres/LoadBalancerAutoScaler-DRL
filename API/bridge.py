@@ -15,7 +15,7 @@ class ContainerMetrics(BaseModel):
     ram_total_normalize: float = 0.0
     latency: float = 0.0
     error_rate: float = 0.0
-    status: bool = False
+    status: float = 0.0
 
 @app.post("/init")
 def initialize_cluster_orchestration(n_max=10, max_memory=1024, node_name="lbas_node"):
@@ -23,8 +23,8 @@ def initialize_cluster_orchestration(n_max=10, max_memory=1024, node_name="lbas_
 
 @app.post("/action")
 def post_action(action:AgentAction):
-    weights = action.weights
-    decision = action.decision
+    weights = action.weights # LB -> [w1, w2, w3, ..., wn]
+    decision = action.decision # AS -> 1.0 | 0.0
 
     if decision >= 0.7:
         # + 1 container
@@ -33,12 +33,13 @@ def post_action(action:AgentAction):
     if decision <= 0.3:
         # -1 container
         clusterOrchestration.scale_down()
+        
     clusterOrchestration.rebalance_weights(weights)
     return {"status": "success", "received": action}
 
 @app.get("/metrics")
-def get_metrics(max_memory: float = 1024.0) -> list[ContainerMetrics]:
-    metrics = clusterOrchestration.get_metrics(max_memory)
+def get_metrics() -> list[ContainerMetrics]:
+    metrics = clusterOrchestration.get_metrics()
     return  metrics
 
 @app.get("/reset")

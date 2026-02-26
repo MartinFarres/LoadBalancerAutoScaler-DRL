@@ -34,7 +34,11 @@ class ClusterOrchestration():
 
         # Creates all n containers
         for i in range(self.n_max):
-            self.client.containers.run(image=self.image_container, network="lbas_network", detach=True, name=f"{self.node_name}_{i}",labels={"role": "lbas_node"})
+            self.client.containers.run(image=self.image_container, 
+                                       network="lbas_network", 
+                                       detach=True, 
+                                       name=f"{self.node_name}_{i}",
+                                       labels={"role": "lbas_node"})
 
         # Creates HAProxy container and its configuration
         self.init_haproxy_cfg()
@@ -134,16 +138,18 @@ class ClusterOrchestration():
 
             metric_obj.cpu_usg = cpu_usg
 
-            # Latency & Error Rate Metrics ---
+            # Latency & Error Rate Metrics & Status ---
             nombre_actual = container.name # Ej: "lbas_node_0"
             
             if nombre_actual in haproxy_stats_dict:
                 metric_obj.latency = haproxy_stats_dict[nombre_actual]["latency"]
                 metric_obj.error_rate = haproxy_stats_dict[nombre_actual]["error_rate"]
+                metric_obj.status = haproxy_stats_dict[nombre_actual]["status"]
             else:
                 # Fallback por si HAProxy no tiene registrado el nodo aún
                 metric_obj.latency = 0.0
                 metric_obj.error_rate = 0.0
+                metric_obj.status = 0.0
 
             # Append to list ---
             container_metrics.append(metric_obj)
@@ -151,11 +157,12 @@ class ClusterOrchestration():
         return container_metrics
 
     def init_haproxy_cfg(self):
+        # TODO: Create array with pre-defined config
         with open("haproxy.cfg", "r") as f:
             lines = f.readlines()
 
         pos = lines.index(f"    balance roundrobin\n")
-        new_lines = lines[:pos+1]
+        new_lines = lines[:pos+1] # ["global", " stats socket ipv4@0.0.0.0:9999 level admin", ... , "    balance roundrobin\n"]
 
         for i in range(self.n_max):
             if i == 0:
@@ -194,11 +201,13 @@ class ClusterOrchestration():
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila["rtime"] else 0.0
                 errores = float(fila["hrsp_5xx"]) if fila["hrsp_5xx"] else 0.0
+                status = 1.0 if fila["weight"] > 0 else 0.0
                 
                 # Guardamos todo en un diccionario usando el nombre del nodo como llave
                 haproxy_stats_dict[nombre_nodo] = {
                     "latency": latencia,
-                    "error_rate": errores
+                    "error_rate": errores,
+                    "status": status
                 }
         
         return haproxy_stats_dict
