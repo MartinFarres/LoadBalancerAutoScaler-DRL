@@ -54,6 +54,14 @@ class ClusterOrchestration():
         for container in self.client.containers.list(filters={"label": "role=lbas_node"}):
             container.stop()
 
+    def reset(self):
+        self.last_active_container_idx = 0
+        # Apagamos el trafico para todos menos el primero
+        for i in range(1, self.n_max):
+            self.send_haproxy_command(f"set weight servidores_web/{self.node_name}_{i} 0")
+        self.send_haproxy_command(f"set weight servidores_web/{self.node_name}_0 100")
+
+
     def scale_up(self):
         if (self.last_active_container_idx + 1) < self.n_max:
             command = f"set weight servidores_web/{self.node_name}_{self.last_active_container_idx+1} 50"
@@ -68,6 +76,17 @@ class ClusterOrchestration():
             res = self.send_haproxy_command(command)
             self.last_active_container_idx -= 1
             return res
+
+
+    def rebalance_weights(self, weights):
+        # Transform normalize weight to 256 base for HAProxy
+        weights = [int(w * 256) for w in weights]
+
+        for i in range(len(weights)):
+            if weights[i] != 0.0:
+                command = f"set weight servidores_web/{self.node_name}_{i} {weights[i]}"
+                self.send_haproxy_command(command)        
+
 
 
     def get_metrics(self, max_memory) -> list[ContainerMetrics]:
@@ -127,7 +146,7 @@ class ClusterOrchestration():
         with open("haproxy.cfg", "r") as f:
             lines = f.readlines()
 
-        pos = lines.index(f"balance roundrobin*")
+        pos = lines.index(f"    balance roundrobin\n")
         new_lines = lines[:pos]
 
         for i in range(self.n_max):
