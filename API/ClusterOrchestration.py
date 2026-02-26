@@ -6,10 +6,14 @@ from bridge import ContainerMetrics
 
 
 class ClusterOrchestration():
-    def __init__(self, n_max=10, node_name="lbas_node"):
+    def __init__(self):
+        pass
+
+    def set_params_and_start(self, n_max=10, max_memory=1024, node_name="lbas_node"):
         self.n_max = n_max
         self.node_name = node_name
         self.last_active_container_idx = 0
+        self.max_memory = max_memory
         
         self.client = docker.from_env()
         # Pull image or Create image in dockerfile with a functioning server
@@ -53,6 +57,11 @@ class ClusterOrchestration():
     def stop_all(self):
         for container in self.client.containers.list(filters={"label": "role=lbas_node"}):
             container.stop()
+        try:
+            self.client.containers.get("lbas_haproxy").stop()
+            self.client.containers.get("lbas_haproxy").remove()
+        except docker.errors.NotFound:
+            pass
 
     def reset(self):
         self.last_active_container_idx = 0
@@ -83,13 +92,12 @@ class ClusterOrchestration():
         weights = [int(w * 256) for w in weights]
 
         for i in range(len(weights)):
-            if weights[i] != 0.0:
-                command = f"set weight servidores_web/{self.node_name}_{i} {weights[i]}"
-                self.send_haproxy_command(command)        
+            command = f"set weight servidores_web/{self.node_name}_{i} {weights[i]}"
+            self.send_haproxy_command(command)        
 
 
 
-    def get_metrics(self, max_memory) -> list[ContainerMetrics]:
+    def get_metrics(self) -> list[ContainerMetrics]:
         container_metrics = []
         haproxy_stats_dict = self.get_haproxy_stats()
 
@@ -103,7 +111,7 @@ class ClusterOrchestration():
             ram_limit_bytes = metric["memory_stats"]["limit"]
 
             ram_usg_pct = ram_usg_bytes / ram_limit_bytes # porcentaje = fraccion_del_total / total
-            ram_total_normalize = (ram_limit_bytes / (1024**2)) / max_memory # pasamos de b a mb y dividimos por el total (establecido en env)
+            ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory # pasamos de b a mb y dividimos por el total (establecido en env)
             
             metric_obj.ram_usg_pct = ram_usg_pct
             metric_obj.ram_total_normalize = ram_total_normalize
@@ -147,7 +155,7 @@ class ClusterOrchestration():
             lines = f.readlines()
 
         pos = lines.index(f"    balance roundrobin\n")
-        new_lines = lines[:pos]
+        new_lines = lines[:pos+1]
 
         for i in range(self.n_max):
             if i == 0:

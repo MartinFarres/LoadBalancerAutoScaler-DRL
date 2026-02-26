@@ -17,6 +17,10 @@ class ContainerMetrics(BaseModel):
     error_rate: float = 0.0
     status: bool = False
 
+@app.post("/init")
+def initialize_cluster_orchestration(n_max=10, max_memory=1024, node_name="lbas_node"):
+    clusterOrchestration.set_params_and_start(n_max, max_memory, node_name)
+
 @app.post("/action")
 def post_action(action:AgentAction):
     weights = action.weights
