@@ -8,3 +8,6 @@ fastapi
 pydantic
 docker
 locust
+Flask
+gunicorn
+uvicorn[standard]

@@ -1,21 +1,80 @@
-from environment import LoadBalancerEnv as env
+import subprocess
+import time
+import requests
+import sys
+
+def main():
+    procesos = []
+
+    print("[1/5] Iniciando API Bridge (FastAPI)...")
+    api_process = subprocess.Popen(
+        ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000"], 
+        cwd="API"
+    )
+    procesos.append(("API Bridge", api_process))
+    
+    time.sleep(3) 
+
+    print("[2/5] Inicializando cluster Docker (HAProxy + Nodos)...")
+    try:
+        # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
+        res = requests.post("http://127.0.0.1:8000/init", timeout=60)
+        if res.status_code == 200:
+            print("  Cluster inicializado con éxito.")
+        else:
+            print(f"  Error al inicializar: {res.text}")
+            raise Exception("API devolvió error")
+    except Exception as e:
+        print("   Fallo la conexión con la API:", e)
+        apagar_procesos(procesos)
+        sys.exit(1)
+
+    # Esperamos a que los contenedores respiren y HAProxy resuelva los DNS internos
+    time.sleep(5) 
+
+    print("[3/5] Iniciando tráfico de estrés (Locust Headless)...")
+    # -u 50: 50 usuarios concurrentes | -r 5: entran 5 por segundo
+    locust_process = subprocess.Popen([
+        "locust", "-f", "API/locustfile.py", 
+        "--headless", "-u", "50", "-r", "5", 
+        "-H", "http://127.0.0.1:80"
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procesos.append(("Locust", locust_process))
+    print("   Tráfico simulado inyectándose en http://127.0.0.1:80")
+
+    print("[4/5] Iniciando TensorBoard...")
+    tb_process = subprocess.Popen(["tensorboard", "--logdir", "./environment/logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procesos.append(("TensorBoard", tb_process))
+    print("    TensorBoard disponible en http://localhost:6006")
+
+    print(" [5/5] Iniciando Entrenamiento del Agente PPO...\n")
+    print("-" * 50)
+    time.sleep(2)
+    
+    train_process = subprocess.Popen(["python", "environment/train_agent.py"])
+    procesos.append(("PPO Training", train_process))
+
+    try:
+        # esperando a que el entrenamiento termine (o a que presiones Ctrl+C)
+        train_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
+
+    apagar_procesos(procesos)
+
+def apagar_procesos(procesos):
+    print("\n [Limpieza] Apagando servicios en segundo plano...")
+    for nombre, proceso in procesos:
+        print(f"   Deteniendo {nombre}...")
+        proceso.terminate()
+        proceso.wait() # Aseguramos que muera completamente
+    
+    # try:
+    #     requests.get("http://127.0.0.1:8000/reset", timeout=5)
+    # except:
+    #     pass
+        
+    print("Terminado.")
 
 if __name__ == "__main__":
-    # Crear el entorno
-    environment = env(n_max=10, max_steps=100, max_memory=1024)
-    
-    # Reiniciar el entorno para obtener el estado inicial
-    state, info = environment.reset()
-    print("Estado inicial:", state)
-    print("Info:", info)
-    
-    # Ejemplo de acción (pesos de ruteo y decisión de auto-scaling)
-    action = [0.1] * 10 + [0.8]  # Pesos iguales y decisión de escalar hacia arriba
-    
-    # Avanzar un paso en el entorno con la acción dada
-    new_state, reward, terminated, truncated, info = environment.step(action)
-    print("Nuevo estado:", new_state)
-    print("Recompensa:", reward)
-    print("¿Terminado?", terminated)
-    print("¿Truncado?", truncated)
-    print("Info:", info)
+    main()
