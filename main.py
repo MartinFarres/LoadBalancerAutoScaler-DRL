@@ -35,7 +35,7 @@ def main():
     print("[3/5] Iniciando tráfico de estrés (Locust Headless)...")
     # -u 50: 50 usuarios concurrentes | -r 5: entran 5 por segundo
     locust_process = subprocess.Popen([
-        "locust", "-f", "API/locustfile.py", 
+        "locust", "-f", "API/locust.py", 
         "--headless", "-u", "50", "-r", "5", 
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

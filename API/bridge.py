@@ -1,25 +1,15 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from ClusterOrchestration import ClusterOrchestration
+from schemas import AgentAction, ContainerMetrics
 
 app = FastAPI()
 clusterOrchestration = ClusterOrchestration()
 
-class AgentAction(BaseModel):
-    weights: list[float]
-    decision: float
-
-class ContainerMetrics(BaseModel):
-    cpu_usg: float = 0.0
-    ram_usg_pct: float = 0.0
-    ram_total_normalize: float = 0.0
-    latency: float = 0.0
-    error_rate: float = 0.0
-    status: float = 0.0
-
 @app.post("/init")
 def initialize_cluster_orchestration(n_max=10, max_memory=1024, node_name="lbas_node"):
     clusterOrchestration.set_params_and_start(n_max, max_memory, node_name)
+    return {"status": "initialized", "n_max": n_max}
 
 @app.post("/action")
 def post_action(action:AgentAction):

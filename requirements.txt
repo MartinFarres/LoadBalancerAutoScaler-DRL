@@ -6,7 +6,6 @@ tensorboard
 setuptools<70.0.0
 fastapi
 pydantic
-docker
 locust
 Flask
 gunicorn

@@ -2,7 +2,8 @@ import docker
 import socket
 import csv
 import io
-from bridge import ContainerMetrics
+import os
+from schemas import ContainerMetrics
 
 
 class ClusterOrchestration():
@@ -46,8 +47,8 @@ class ClusterOrchestration():
                                                 network="lbas_network", 
                                                 name=f"lbas_haproxy", 
                                                 volumes={
-                                                    # path on your machine/host
-                                                    "./haproxy.cfg": {
+                                                    # path on your machine/host (must be absolute for Docker SDK)
+                                                    os.path.abspath("haproxy.cfg"): {
                                                         "bind": "/usr/local/etc/haproxy/haproxy.cfg",  # path inside the container
                                                         "mode": "rw",
                                                     },
@@ -201,7 +202,7 @@ class ClusterOrchestration():
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila["rtime"] else 0.0
                 errores = float(fila["hrsp_5xx"]) if fila["hrsp_5xx"] else 0.0
-                status = 1.0 if fila["weight"] > 0 else 0.0
+                status = 1.0 if int(fila["weight"]) > 0 else 0.0
                 
                 # Guardamos todo en un diccionario usando el nombre del nodo como llave
                 haproxy_stats_dict[nombre_nodo] = {

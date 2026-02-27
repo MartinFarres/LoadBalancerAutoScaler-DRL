@@ -15,7 +15,7 @@ model = PPO("MlpPolicy",
 
 print("Initiating training sequence...")
 
-model.learn(total_timesteps=5000, tb_log_name="PPRO_500k") # 5k
+model.learn(total_timesteps=5000, tb_log_name="PPO_5k") # 5k
 
 model.save("ppo_lb_agent_v1")
 print("Training complete and model saved!")
