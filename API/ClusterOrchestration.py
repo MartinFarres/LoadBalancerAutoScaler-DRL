@@ -221,7 +221,7 @@ class ClusterOrchestration():
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila["rtime"] else 0.0
                 errores = float(fila["hrsp_5xx"]) if fila["hrsp_5xx"] else 0.0
-                status = 1.0 if int(fila["weight"]) > 0 else 0.0
+                status = 1.0 if fila["weight"] and int(fila["weight"]) > 0 else 0.0
                 
                 # Guardamos todo en un diccionario usando el nombre del nodo como llave
                 haproxy_stats_dict[nombre_nodo] = {
