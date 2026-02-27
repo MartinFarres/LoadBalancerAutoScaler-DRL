@@ -39,7 +39,9 @@ class LoadBalancerEnv(gym.Env):
 
         # Variables exclusivas para el modo simulado
         if self.simulated:
+            self.current_step = 0
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
+            self.sim_active_containers[0] = True
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -73,6 +75,19 @@ class LoadBalancerEnv(gym.Env):
             time.sleep(0.3) # Ajustado para no desincronizar metricas
             self.actual_state = self.get_real_metrics()
         else:
+            # Actualizar estado simulado
+            #self.actual_state = self.get_simulated_metrics(action)
+            if scale_desition > 0.8:
+                for i in range(self.n_max):
+                    if not self.sim_active_containers[i]:
+                        self.sim_active_containers[i] = True
+                        break
+            elif scale_desition < 0.2:
+                for i in range(self.n_max - 1, 0, -1): # Recorre desde el final hasta el penultimo asegurando al menos 1 activo
+                    if self.sim_active_containers[i]:
+                        self.sim_active_containers[i] = False
+                        break
+            
             self.actual_state = self.get_simulated_metrics(action)
         
         # Calcular contenedores vivos leyendo el status del estado actual
@@ -108,11 +123,48 @@ class LoadBalancerEnv(gym.Env):
         """
         TODO: modelo matemático que simula la CPU y Latencia 
         """
-        new_state = np.zeros(self.n_max * 6, dtype=np.float32)
+
+        current_step = self.current_step
+        total_workload = max(10, 50 * (1 + np.sin(2 * np.pi * current_step / 50)) + np.random.normal(0, 2))
         
-        if action is not None:
-            pass
-            
+        new_state = np.zeros(self.n_max * 6, dtype=np.float32)
+
+        # Distribución de carga según pesos de la acción
+        raw_weights = action[:self.n_max] if action is not None else np.zeros(self.n_max)
+
+        # Ignoro pesos de nodos apagados
+        active_mask = self.sim_active_containers.astype(float)
+        effective_weights = raw_weights * active_mask
+        
+        # Normalizo para que la suma de tráfico sea 100%
+        sum_w = np.sum(effective_weights)
+        norm_weights = effective_weights / sum_w if sum_w > 0 else effective_weights
+        if sum_w == 0 and self.sim_active_containers[0]: norm_weights[0] = 1.0
+
+        for i in range(self.n_max):
+            idx = i * 6
+            if self.sim_active_containers[i]:
+                # CPU = Carga recibida / Capacidad del nodo
+                node_load = total_workload * norm_weights[i]
+                cpu_usage = min(1.0, node_load / 20.0) 
+                
+                # Latencia: 10ms base + crecimiento exponencial tras 70% CPU
+                latency_ms = 10 + (cpu_usage ** 4) * 500 
+                
+                # Errores 5xx: Aparecen si la CPU supera el 90%
+                errors = max(0.0, (cpu_usage - 0.9) * 10) if cpu_usage > 0.9 else 0.0
+                
+                new_state[idx:idx+6] = [
+                    cpu_usage,       # cpu_usg
+                    0.3,             # ram_usg_pct
+                    1.0,             # ram_total_normalize
+                    latency_ms / 1000, # latency (segundos)
+                    errors,          # error_rate
+                    1.0              # status (ACTIVO)
+                ]
+            else:
+                new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
+
         return new_state
 
     def reward_function(self, state, action, cant_active_containers):
