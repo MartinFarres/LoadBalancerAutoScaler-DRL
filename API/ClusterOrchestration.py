@@ -17,7 +17,7 @@ class ClusterOrchestration():
         
         self.client = docker.from_env()
         # Pull image or Create image in dockerfile with a functioning server
-        self.image_container = self.client.images.get("My Image")
+        self.image_container = self.client.images.get("dummy_server:latest")
         # HAProxy image
         self.image_HAProxy = self.client.images.get("haproxytech/haproxy-alpine:3.0")
 
