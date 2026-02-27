@@ -69,10 +69,10 @@ def apagar_procesos(procesos):
         proceso.terminate()
         proceso.wait() # Aseguramos que muera completamente
     
-    # try:
-    #     requests.get("http://127.0.0.1:8000/reset", timeout=5)
-    # except:
-    #     pass
+    try:
+        requests.get("http://127.0.0.1:8000/cleanup", timeout=30)
+    except:
+        pass
         
     print("Terminado.")
 

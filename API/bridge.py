@@ -35,3 +35,8 @@ def get_metrics() -> list[ContainerMetrics]:
 @app.get("/reset")
 def reset():
     clusterOrchestration.reset()
+
+@app.get("/cleanup")
+def cleanup():
+    clusterOrchestration.stop_all()
+    return {"status": "cleaned up"}

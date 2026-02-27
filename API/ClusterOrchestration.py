@@ -18,18 +18,27 @@ class ClusterOrchestration():
         
         self.client = docker.from_env()
         # Pull image or Create image in dockerfile with a functioning server
-        self.image_container = self.client.images.get("dummy_server:latest")
+        self.image_container = self._get_or_pull("dummy_server:latest")
         # HAProxy image
-        self.image_HAProxy = self.client.images.get("haproxytech/haproxy-alpine:3.0")
+        self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
 
         self.start()
 
+    def _get_or_pull(self, image_name: str):
+        """Try to get a local image; if not found, pull it from Docker Hub."""
+        try:
+            return self.client.images.get(image_name)
+        except docker.errors.ImageNotFound:
+            print(f"  Image '{image_name}' not found locally. Pulling...")
+            return self.client.images.pull(image_name)
+
     def start(self):
-        # Create network if doesn't exists
+        # Always clean up any leftover containers from previous runs
+        self.stop_all()
+
+        # Create network if it doesn't exist
         try:
             self.client.networks.get("lbas_network")
-            # Stop all containers
-            self.stop_all()
         except docker.errors.NotFound:
             self.client.networks.create("lbas_network")
 
@@ -60,11 +69,21 @@ class ClusterOrchestration():
         
         
     def stop_all(self):
-        for container in self.client.containers.list(filters={"label": "role=lbas_node"}):
-            container.stop()
+        # Stop and remove all node containers (including stopped ones)
+        for container in self.client.containers.list(all=True, filters={"label": "role=lbas_node"}):
+            try:
+                container.stop()
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
+        # Stop and remove HAProxy
         try:
-            self.client.containers.get("lbas_haproxy").stop()
-            self.client.containers.get("lbas_haproxy").remove()
+            haproxy = self.client.containers.get("lbas_haproxy")
+            haproxy.stop()
+            haproxy.remove(force=True)
         except docker.errors.NotFound:
             pass
 
