@@ -198,12 +198,31 @@ class ClusterOrchestration():
         return i, metric_obj
 
     def init_haproxy_cfg(self):
-        # TODO: Create array with pre-defined config
+        # Base cofiguration hardcodeada
+        new_lines = [
+            "global\n",
+            "    stats socket ipv4@0.0.0.0:9999 level admin\n",
+            "    maxconn 2000\n",
+            "defaults\n",
+            "    mode http\n",
+            "    timeout connect 5000ms\n",
+            "    timeout client  50000ms\n",
+            "    timeout server  50000ms\n",
+            "frontend http_in\n",
+            "    bind *:80\n",
+            "    default_backend servidores_web\n",
+            "backend servidores_web\n",
+            "    balance roundrobin\n"
+        ]
+
+        # Codigo anterior
+        """
         with open("haproxy.cfg", "r") as f:
             lines = f.readlines()
 
         pos = lines.index(f"    balance roundrobin\n")
         new_lines = lines[:pos+1] # ["global", " stats socket ipv4@0.0.0.0:9999 level admin", ... , "    balance roundrobin\n"]
+        """
 
         for i in range(self.n_max):
             if i == 0:
