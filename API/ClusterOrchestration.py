@@ -3,6 +3,7 @@ import socket
 import csv
 import io
 import os
+import concurrent.futures
 from schemas import ContainerMetrics
 
 
@@ -122,20 +123,42 @@ class ClusterOrchestration():
 
 
     def get_metrics(self) -> list[ContainerMetrics]:
-        container_metrics = []
+        # Pre-armamos una lista vacía con 10 espacios
+        container_metrics = [ContainerMetrics()] * self.n_max
         haproxy_stats_dict = self.get_haproxy_stats()
 
-        for container in self.client.containers.list(filters={"label": "role=lbas_node", "network":"lbas_network"}):
-            metric_obj = ContainerMetrics()
-            # Gets metrics
+        # Lanzamos un ThreadPool con la misma cantidad de workers que contenedores
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.n_max) as executor:
+            # Programamos las 10 tareas en paralelo
+            futures = [
+                executor.submit(self._fetch_single_container_metrics, i, haproxy_stats_dict) 
+                for i in range(self.n_max)
+            ]
+
+            # A medida que los hilos van terminando, guardamos el resultado en su posición exacta
+            for future in concurrent.futures.as_completed(futures):
+                idx, metric_obj = future.result()
+                container_metrics[idx] = metric_obj
+        
+        return container_metrics
+    
+
+    def _fetch_single_container_metrics(self, i: int, haproxy_stats_dict: dict):
+        """Método worker que se ejecutará en paralelo para cada contenedor"""
+        metric_obj = ContainerMetrics()
+        nombre_nodo = f"{self.node_name}_{i}"
+        
+        try:
+            # Pedimos el contenedor específico por nombre (Garantiza el orden correcto)
+            container = self.client.containers.get(nombre_nodo)
             metric = container.stats(stream=False)
 
             # RAM Metric ---
             ram_usg_bytes = metric["memory_stats"]["usage"]
             ram_limit_bytes = metric["memory_stats"]["limit"]
 
-            ram_usg_pct = ram_usg_bytes / ram_limit_bytes # porcentaje = fraccion_del_total / total
-            ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory # pasamos de b a mb y dividimos por el total (establecido en env)
+            ram_usg_pct = ram_usg_bytes / ram_limit_bytes 
+            ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory 
             
             metric_obj.ram_usg_pct = ram_usg_pct
             metric_obj.ram_total_normalize = ram_total_normalize
@@ -147,34 +170,32 @@ class ClusterOrchestration():
             system_last_usage = metric["precpu_stats"]["system_cpu_usage"]
             count_cores = metric["cpu_stats"]["online_cpus"] or 1
 
-            # Getting the cpu_normalize
             delta_cpu = cpu_actual_usage - cpu_last_usage
             delta_system = system_actual_usage - system_last_usage
             
-            if delta_system > 0: # Preventing ZeroDivisionError
+            if delta_system > 0: 
                 cpu_usg = (delta_cpu / delta_system) * count_cores
             else:
                 cpu_usg = 0.0
 
             metric_obj.cpu_usg = cpu_usg
 
-            # Latency & Error Rate Metrics & Status ---
-            nombre_actual = container.name # Ej: "lbas_node_0"
-            
-            if nombre_actual in haproxy_stats_dict:
-                metric_obj.latency = haproxy_stats_dict[nombre_actual]["latency"]
-                metric_obj.error_rate = haproxy_stats_dict[nombre_actual]["error_rate"]
-                metric_obj.status = haproxy_stats_dict[nombre_actual]["status"]
-            else:
-                # Fallback por si HAProxy no tiene registrado el nodo aún
-                metric_obj.latency = 0.0
-                metric_obj.error_rate = 0.0
-                metric_obj.status = 0.0
+        except Exception as e:
+            # Fallback por si el contenedor murió o no responde
+            pass
 
-            # Append to list ---
-            container_metrics.append(metric_obj)
-        
-        return container_metrics
+        # Latency, Error Rate & Status ---
+        if nombre_nodo in haproxy_stats_dict:
+            metric_obj.latency = haproxy_stats_dict[nombre_nodo]["latency"]
+            metric_obj.error_rate = haproxy_stats_dict[nombre_nodo]["error_rate"]
+            metric_obj.status = haproxy_stats_dict[nombre_nodo]["status"]
+        else:
+            metric_obj.latency = 0.0
+            metric_obj.error_rate = 0.0
+            metric_obj.status = 0.0
+
+        # Retornamos el índice original para poder armar la lista final en orden
+        return i, metric_obj
 
     def init_haproxy_cfg(self):
         # TODO: Create array with pre-defined config
@@ -219,9 +240,12 @@ class ClusterOrchestration():
                 
                 # HAProxy devuelve un string vacío '' si no hay datos de latencia aún.
                 # Nos aseguramos de convertirlo a 0.0
-                latencia = float(fila["rtime"]) if fila["rtime"] else 0.0
-                errores = float(fila["hrsp_5xx"]) if fila["hrsp_5xx"] else 0.0
-                status = 1.0 if fila["weight"] and int(fila["weight"]) > 0 else 0.0
+                latencia = float(fila["rtime"]) if fila.get("rtime") else 0.0
+                errores = float(fila["hrsp_5xx"]) if fila.get("hrsp_5xx") else 0.0
+                try:
+                    status = 1.0 if int(fila.get("weight") or 0) > 0 else 0.0
+                except (ValueError, TypeError):
+                    status = 0.0
                 
                 # Guardamos todo en un diccionario usando el nombre del nodo como llave
                 haproxy_stats_dict[nombre_nodo] = {

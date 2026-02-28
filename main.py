@@ -43,7 +43,7 @@ def main():
     print("   Tráfico simulado inyectándose en http://127.0.0.1:80")
 
     print("[4/5] Iniciando TensorBoard...")
-    tb_process = subprocess.Popen(["tensorboard", "--logdir", "./environment/logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tb_process = subprocess.Popen(["tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procesos.append(("TensorBoard", tb_process))
     print("    TensorBoard disponible en http://localhost:6006")
 
