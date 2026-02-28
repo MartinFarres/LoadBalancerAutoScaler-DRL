@@ -136,7 +136,6 @@ class LoadBalancerEnv(gym.Env):
         active_mask = self.sim_active_containers.astype(float)
         effective_weights = raw_weights * active_mask
         
-        # Normalizo para que la suma de tráfico sea 100%
         sum_w = np.sum(effective_weights)
         norm_weights = effective_weights / sum_w if sum_w > 0 else effective_weights
 
@@ -145,14 +144,13 @@ class LoadBalancerEnv(gym.Env):
         for i in range(self.n_max):
             idx = i * 6
             if self.sim_active_containers[i]:
-                # CPU = Carga recibida / Capacidad del nodo
+                # Capacidad del nodo 50 'unidades' de trabajo
                 node_load = total_workload * norm_weights[i]
                 cpu_usage = min(1.0, node_load / 50.0) 
                 
-                # Latencia: 10ms base + crecimiento exponencial tras 70% CPU
+               
                 latency_ms = 10 + (cpu_usage ** 4) * 500 
                 
-                # Si la CPU supera el 90% penalizo al agente con errores 5xx
                 errors = max(0.0, (cpu_usage - 0.9) * 10) if cpu_usage > 0.9 else 0.0
                 
                 new_state[idx:idx+6] = [
@@ -173,11 +171,11 @@ class LoadBalancerEnv(gym.Env):
         total_reward = 0.0
 
         if self.simulated:
-            # Pesos re-ajustados para equilibrio real
-            W_LATENCY = 2.0      # Más peso para estabilizar la respuesta
-            W_ERRORS = 50.0      # Penalización masiva por fallos de servicio
-            W_COST = 1.5         # Aumentado para que el agente busque apagar nodos innecesarios
-            W_SATURATION = 1.0   # Penalización preventiva
+            # Pesos re-ajustados 
+            W_LATENCY = 2.0      
+            W_ERRORS = 50.0      
+            W_COST = 1.5         
+            W_SATURATION = 1.0   
             
             if cant_active_containers == 0:
                 return -200.0 
@@ -203,7 +201,7 @@ class LoadBalancerEnv(gym.Env):
                         
             avg_latency /= cant_active_containers
             
-            # 2. Cálculo de penalizaciones base
+            # Calculo penalizaciones
             latency_penalty = W_LATENCY * avg_latency
             error_penalty = W_ERRORS * total_errors
             cost_penalty = W_COST * (cant_active_containers / self.n_max)
