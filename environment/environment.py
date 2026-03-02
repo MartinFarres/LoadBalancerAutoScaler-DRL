@@ -106,16 +106,35 @@ class LoadBalancerEnv(gym.Env):
         new_state = []
         try:
             response = requests.get(f"{self.api_url}/metrics").json()
+            
+            MAX_LATENCY_MS = 2000.0 # 2 segundos máximo
+            
             for i in range(self.n_max):
-                new_state.append(response[i]["cpu_usg"])
-                new_state.append(response[i]["ram_usg_pct"])
-                new_state.append(response[i]["ram_total_normalize"])
-                new_state.append(response[i]["latency"])
-                new_state.append(response[i]["error_rate"])
-                new_state.append(response[i]["status"])              
-        except Exception:
-            # Fallback seguro en caso de que la API parpadee
+                
+                cpu_raw = response[i]["cpu_usg"]
+                cpu_norm = min(1.0, max(0.0, cpu_raw))
+                
+                ram_raw = response[i]["ram_usg_pct"]
+                ram_norm = min(1.0, max(0.0, ram_raw))
+                
+                ram_tot_raw = response[i]["ram_total_normalize"]
+                ram_tot_norm = min(1.0, max(0.0, ram_tot_raw))
+                
+                # Convertimos milisegundos a una escala 0.0 - 1.0
+                latency_raw = response[i]["latency"]
+                latency_norm = min(1.0, latency_raw / MAX_LATENCY_MS)
+                
+                error_raw = response[i]["error_rate"]
+                error_norm = min(1.0, max(0.0, error_raw))
+                
+                status = float(response[i]["status"])
+                
+                new_state.extend([cpu_norm, ram_norm, ram_tot_norm, latency_norm, error_norm, status])
+                
+        except Exception as e:
+            print(f"Error leyendo API: {e}")
             new_state = [0.0] * (self.n_max * 6)
+            new_state[5] = 1.0 
             
         return np.array(new_state, dtype=np.float32)
 
@@ -170,87 +189,46 @@ class LoadBalancerEnv(gym.Env):
 
         total_reward = 0.0
 
-        if self.simulated:
-            # Pesos re-ajustados 
-            W_LATENCY = 2.0      
-            W_ERRORS = 50.0      
-            W_COST = 1.5         
-            W_SATURATION = 1.0   
+        # Pesos re-ajustados 
+        W_LATENCY = 2.0      
+        W_ERRORS = 50.0      
+        W_COST = 1.5         
+        W_SATURATION = 1.0   
+        
+        if cant_active_containers == 0:
+            return -200.0 
             
-            if cant_active_containers == 0:
-                return -200.0 
-                
-            avg_latency = 0.0
-            total_errors = 0.0
+        avg_latency = 0.0
+        total_errors = 0.0
+        
+        for i in range(self.n_max):
+            idx_base = i * 6 
+            status = state[idx_base + 5] #
             
-            for i in range(self.n_max):
-                idx_base = i * 6 
-                status = state[idx_base + 5] #
-                
-                if status == 1.0:
-                    cpu_pct = state[idx_base]
-                    ram_pct = state[idx_base + 1]
-                    latency = state[idx_base + 3]
-                    errores = state[idx_base + 4]
+            if status == 1.0:
+                cpu_pct = state[idx_base]
+                ram_pct = state[idx_base + 1]
+                latency = state[idx_base + 3]
+                errores = state[idx_base + 4]
 
-                    avg_latency += latency
-                    total_errors += errores
+                avg_latency += latency
+                total_errors += errores
+                
+                if cpu_pct > 0.80:
+                    total_reward -= W_SATURATION * (cpu_pct - 0.80)
                     
-                    if cpu_pct > 0.80:
-                        total_reward -= W_SATURATION * (cpu_pct - 0.80)
-                        
-            avg_latency /= cant_active_containers
-            
-            # Calculo penalizaciones
-            latency_penalty = W_LATENCY * avg_latency
-            error_penalty = W_ERRORS * total_errors
-            cost_penalty = W_COST * (cant_active_containers / self.n_max)
-            
-            total_reward -= (latency_penalty + error_penalty + cost_penalty)
-            
-            #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
-            scale_decision = action[-1]
-            if 0.4 < scale_decision < 0.6:
-                total_reward -= 0.01 
-
-        else: 
-            
-            
-            W_LATENCY = 1.0
-            W_ERRORS = 10.0      
-            W_COST = 0.2         
-            W_SATURATION = 0.5    
-            
-            if cant_active_containers == 0:
-                return -100.0 
-                
-            avg_latency = 0.0
-            total_errors = 0.0
-            
-            for i in range(self.n_max):
-                idx_base = i * 6 
-                status = state[idx_base + 5] 
-                
-                if status == 1.0:
-                    cpu_pct = state[idx_base]
-                    ram_pct = state[idx_base + 1]
-                    latency = state[idx_base + 3]
-                    errores = state[idx_base + 4]
-
-                    avg_latency += latency
-                    total_errors += errores
-                    
-                    if cpu_pct > 0.85:
-                        total_reward -= W_SATURATION * ((cpu_pct - 0.85) * 10)
-                    if ram_pct > 0.85:
-                        total_reward -= W_SATURATION * ((ram_pct - 0.85) * 10)
-                        
-            avg_latency /= cant_active_containers
-            
-            total_reward -= (W_LATENCY * avg_latency + W_ERRORS * total_errors + W_COST * (cant_active_containers / self.n_max))
-            
-            scale_decision = action[-1]
-            if scale_decision < 0.3 or scale_decision > 0.7:
-                total_reward -= 0.05 
-            
+        avg_latency /= cant_active_containers
+        
+        # Calculo penalizaciones
+        latency_penalty = W_LATENCY * avg_latency
+        error_penalty = W_ERRORS * total_errors
+        cost_penalty = W_COST * (cant_active_containers / self.n_max)
+        
+        total_reward -= (latency_penalty + error_penalty + cost_penalty)
+        
+        #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
+        scale_decision = action[-1]
+        if 0.4 < scale_decision < 0.6:
+            total_reward -= 0.01 
+        
         return total_reward

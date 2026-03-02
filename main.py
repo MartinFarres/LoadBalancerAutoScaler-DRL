@@ -3,10 +3,10 @@ import time
 import requests
 import sys
 
-def main():
+def simulated():
     procesos = []
 
-    print("[1/6] Iniciando Entrenamiento Simulado... ")
+    print("[1/1] Iniciando Entrenamiento Simulado... ")
 
     train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_1_simulation"])
     procesos.append(("PPO Training Simulated", train_process))
@@ -16,11 +16,17 @@ def main():
         train_process.wait()
     except KeyboardInterrupt:
         print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
-        apagar_procesos(procesos)
         sys.exit(0) # Salida limpia
+    finally:
+        apagar_procesos(procesos)
 
 
-    print("[2/6] Iniciando API Bridge (FastAPI)...")
+def real():
+    procesos = []
+
+    print(" Iniciando Entorno Real... ")
+
+    print("[1/4] Iniciando API Bridge (FastAPI)...")
     api_process = subprocess.Popen(
         ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000"], 
         cwd="API"
@@ -29,7 +35,7 @@ def main():
     
     time.sleep(3) 
 
-    print("[3/6] Inicializando cluster Docker (HAProxy + Nodos)...")
+    print("[2/4] Inicializando cluster Docker (HAProxy + Nodos)...")
     try:
         # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
         res = requests.post("http://127.0.0.1:8000/init", timeout=60)
@@ -46,22 +52,22 @@ def main():
     # Esperamos a que los contenedores respiren y HAProxy resuelva los DNS internos
     time.sleep(5) 
 
-    print("[4/6] Iniciando tráfico de estrés (Locust Headless)...")
-    # -u 50: 50 usuarios concurrentes | -r 5: entran 5 por segundo
+    print("[3/4] Iniciando tráfico de estrés (Locust Headless)...")
+    # -u 50: 50 usuarios concurrentes | -r 1: entran 1 por segundo
     locust_process = subprocess.Popen([
         "locust", "-f", "API/locust.py", 
-        "--headless", "-u", "50", "-r", "5", 
+        "--headless", "-u", "50", "-r", "1", 
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procesos.append(("Locust", locust_process))
     print("Tráfico simulado inyectándose en http://127.0.0.1:80")
 
-    print("[5/6] Iniciando TensorBoard...")
+    print("[4/4] Iniciando TensorBoard...")
     tb_process = subprocess.Popen(["tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procesos.append(("TensorBoard", tb_process))
     print("    TensorBoard disponible en http://localhost:6006")
 
-    print(" [6/6] Iniciando Entrenamiento entorno real...\n")
+    print("[1/1] Iniciando Entrenamiento Real... ")
     print("-" * 50)
     time.sleep(2)
     
@@ -91,4 +97,16 @@ def apagar_procesos(procesos):
     print("Terminado.")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        comando = sys.argv[1]
+        
+        if comando == "simulado":
+            simulated()
+        elif comando == "real":
+            real()
+        else:
+            print(f"Comando desconocido: {comando}")
+    else:
+        print("Iniciando pipeline completo (Simulación -> Real)...")
+        simulated()
+        real()
