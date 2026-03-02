@@ -6,7 +6,21 @@ import sys
 def main():
     procesos = []
 
-    print("[1/5] Iniciando API Bridge (FastAPI)...")
+    print("[1/6] Iniciando Entrenamiento Simulado... ")
+
+    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_1_simulation"])
+    procesos.append(("PPO Training Simulated", train_process))
+
+    try:
+        # esperando a que el entrenamiento termine (o a que presiones Ctrl+C)
+        train_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
+        apagar_procesos(procesos)
+        sys.exit(0) # Salida limpia
+
+
+    print("[2/6] Iniciando API Bridge (FastAPI)...")
     api_process = subprocess.Popen(
         ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000"], 
         cwd="API"
@@ -15,7 +29,7 @@ def main():
     
     time.sleep(3) 
 
-    print("[2/5] Inicializando cluster Docker (HAProxy + Nodos)...")
+    print("[3/6] Inicializando cluster Docker (HAProxy + Nodos)...")
     try:
         # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
         res = requests.post("http://127.0.0.1:8000/init", timeout=60)
@@ -32,7 +46,7 @@ def main():
     # Esperamos a que los contenedores respiren y HAProxy resuelva los DNS internos
     time.sleep(5) 
 
-    print("[3/5] Iniciando tráfico de estrés (Locust Headless)...")
+    print("[4/6] Iniciando tráfico de estrés (Locust Headless)...")
     # -u 50: 50 usuarios concurrentes | -r 5: entran 5 por segundo
     locust_process = subprocess.Popen([
         "locust", "-f", "API/locust.py", 
@@ -40,18 +54,18 @@ def main():
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procesos.append(("Locust", locust_process))
-    print("   Tráfico simulado inyectándose en http://127.0.0.1:80")
+    print("Tráfico simulado inyectándose en http://127.0.0.1:80")
 
-    print("[4/5] Iniciando TensorBoard...")
+    print("[5/6] Iniciando TensorBoard...")
     tb_process = subprocess.Popen(["tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     procesos.append(("TensorBoard", tb_process))
     print("    TensorBoard disponible en http://localhost:6006")
 
-    print(" [5/5] Iniciando Entrenamiento del Agente PPO...\n")
+    print(" [6/6] Iniciando Entrenamiento entorno real...\n")
     print("-" * 50)
     time.sleep(2)
     
-    train_process = subprocess.Popen(["python", "environment/train_agent.py"])
+    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_2_real_world"])
     procesos.append(("PPO Training", train_process))
 
     try:
