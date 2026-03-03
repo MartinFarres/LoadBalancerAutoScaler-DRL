@@ -5,7 +5,7 @@ import numpy as np
 env = LoadBalancerEnv()
 
 print("Loading trained agent...")
-model = PPO.load("ppo_lb_agent_v1")
+model = PPO.load("ppo_lb_production_ready")
 
 obs, info = env.reset()
 
@@ -17,13 +17,13 @@ for i in range(501):
     
     obs, reward, terminated, truncated, info = env.step(action)
     
-    if i % 50 == 0:
+    if i % 10 == 0:
         pesos_ruteo = action[:-1]       # Los primeros 10 valores
         decision_escalado = action[-1]  # El último valor
         
         print(f"\n--- Instance {i+1} ---")
-        print(f"Weight decision (Proxy): {np.round(pesos_ruteo, 2)}")
-        print(f"Auto-scaling decision: {decision_escalado:.2f} (<0.3 Baja, >0.7 Sube)")
+        print(f"Weight decision (Proxy): {pesos_ruteo}")
+        print(f"Auto-scaling decision: {decision_escalado} (<0.3 Baja, >0.7 Sube)")
         print(f"Reward: {reward:.2f}")
         print(f"Active Containers: {info['activos']}")
         

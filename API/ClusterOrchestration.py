@@ -115,9 +115,15 @@ class ClusterOrchestration():
     def rebalance_weights(self, weights):
         # Transform normalize weight to 256 base for HAProxy
         weights = [int(w * 256) for w in weights]
+        
+        for i in range(self.n_max):
 
-        for i in range(len(weights)):
-            command = f"set weight servidores_web/{self.node_name}_{i} {weights[i]}"
+            if i <= self.last_active_container_idx:
+                final_weight = weights[i]
+            else:
+                final_weight = 0.0
+
+            command = f"set weight servidores_web/{self.node_name}_{i} {final_weight}"
             self.send_haproxy_command(command)        
 
 
@@ -214,15 +220,6 @@ class ClusterOrchestration():
             "backend servidores_web\n",
             "    balance roundrobin\n"
         ]
-
-        # Codigo anterior
-        """
-        with open("haproxy.cfg", "r") as f:
-            lines = f.readlines()
-
-        pos = lines.index(f"    balance roundrobin\n")
-        new_lines = lines[:pos+1] # ["global", " stats socket ipv4@0.0.0.0:9999 level admin", ... , "    balance roundrobin\n"]
-        """
 
         for i in range(self.n_max):
             if i == 0:
