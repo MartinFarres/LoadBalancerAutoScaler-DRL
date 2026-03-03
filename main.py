@@ -62,7 +62,7 @@ def init_processes():
 
     print("[1/4] Iniciando API Bridge (FastAPI)...")
     api_process = subprocess.Popen(
-        ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000"], 
+        ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "warning"], 
         cwd="API"
     )
     processes.append(("API Bridge", api_process))
@@ -91,7 +91,7 @@ def init_processes():
     # -u 50: 50 usuarios concurrentes | -r 1: entran 1 por segundo
     locust_process = subprocess.Popen([
         "locust", "-f", "API/locust.py", 
-        "--headless", "-u", "50", "-r", "1", 
+        "--headless", "-u", "10000", "-r", "50", 
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     processes.append(("Locust", locust_process))
