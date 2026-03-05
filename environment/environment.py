@@ -77,12 +77,12 @@ class LoadBalancerEnv(gym.Env):
         else:
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
-            if scale_desition > 0.8:
+            if scale_desition >= 0.7:
                 for i in range(self.n_max):
                     if not self.sim_active_containers[i]:
                         self.sim_active_containers[i] = True
                         break
-            elif scale_desition < 0.2:
+            elif scale_desition <= 0.3:
                 for i in range(self.n_max - 1, 0, -1): # Recorre desde el final hasta el penultimo asegurando al menos 1 activo
                     if self.sim_active_containers[i]:
                         self.sim_active_containers[i] = False
@@ -226,9 +226,15 @@ class LoadBalancerEnv(gym.Env):
         
         total_reward -= (latency_penalty + error_penalty + cost_penalty)
         
-        #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
+        # #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
+        # scale_decision = action[-1]
+        # if 0.3 <= scale_decision <= 0.7:
+        #     total_reward -= 0.01 
+
+        # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
-        if 0.4 < scale_decision < 0.6:
-            total_reward -= 0.01 
+        if scale_decision <= 0.3 or scale_decision >= 0.7:
+            # Pequeña penalidad por ejecutar la acción de escalar
+            total_reward -= 0.05 
         
         return total_reward
