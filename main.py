@@ -91,7 +91,7 @@ def init_processes():
     # -u 50: 50 usuarios concurrentes | -r 1: entran 1 por segundo
     locust_process = subprocess.Popen([
         "locust", "-f", "API/locust.py", 
-        "--headless", "-u", "10000", "-r", "50", 
+        "--headless",  
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     processes.append(("Locust", locust_process))
