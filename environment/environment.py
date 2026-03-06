@@ -64,12 +64,12 @@ class LoadBalancerEnv(gym.Env):
         self.current_step += 1
 
         raw_weights = action[:self.n_max]
-        scale_desition = action[-1]
+        scale_desision = action[-1]
         
         if not self.simulated:
             payload = {
                 "weights": raw_weights.tolist(),
-                "decision": float(scale_desition) 
+                "decision": float(scale_desision) 
             }
             requests.post(f"{self.api_url}/action", json=payload)
             time.sleep(0.3) # Ajustado para no desincronizar metricas
@@ -77,12 +77,12 @@ class LoadBalancerEnv(gym.Env):
         else:
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
-            if scale_desition >= 0.7:
+            if scale_desision >= 0.7:
                 for i in range(self.n_max):
                     if not self.sim_active_containers[i]:
                         self.sim_active_containers[i] = True
                         break
-            elif scale_desition <= 0.3:
+            elif scale_desision <= 0.3:
                 for i in range(self.n_max - 1, 0, -1): # Recorre desde el final hasta el penultimo asegurando al menos 1 activo
                     if self.sim_active_containers[i]:
                         self.sim_active_containers[i] = False
@@ -176,7 +176,7 @@ class LoadBalancerEnv(gym.Env):
                     cpu_usage,       # cpu_usg
                     0.3,             # ram_usg_pct
                     1.0,             # ram_total_normalize
-                    latency_ms / 1000, # latency (segundos)
+                    min(1.0, latency_ms / 2000.0), # latency normalizada a 2000ms
                     errors,          # error_rate
                     1.0              # status (ACTIVO)
                 ]
