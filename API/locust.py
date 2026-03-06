@@ -50,6 +50,7 @@ class StressGenerator(LoadTestShape):
             self.time_limit = np.random.randint(120, 900) # 2 mins to 15 mins
             self.function_number = np.random.randint(0,4)
             self.function_tick_start = self.run_time
+            self.relative_time = 0
             
             # Se generan los valores necesarios para cada funcion
             # Se generan ahora para prevenir que se generen por cada tick
@@ -70,6 +71,9 @@ class StressGenerator(LoadTestShape):
             case 3:
                 user_count = self.step()
 
+        # Tope de seguridad: Nunca menos de 10 usuarios, nunca más del total_users
+        user_count = max(10, min(user_count, self.total_users))
+
         return user_count, self.spawn_rate
 
 
@@ -86,39 +90,68 @@ class StressGenerator(LoadTestShape):
 
     def lineal(self):
         # y = mx + c
-        user_count = self.relative_time * self.scaling_rate + self.user_base
-        return (round(user_count))
+        mid_time = self.time_limit / 2
 
+        if (self.relative_time <= mid_time):
+            # Subida
+            user_count = self.relative_time * self.scaling_rate + self.user_base
+        else:
+            # Bajada 
+            # Calculamos pico medio
+            peak_users = self.user_base + (self.scaling_rate * mid_time)
+            # Tiempo bajando
+            time_down = self.relative_time - mid_time
+            # Restamos desde el pico
+            user_count = peak_users - (self.scaling_rate * time_down)
+            
+        return user_count
     def exponential(self):
         # y = a * e^(k*t)
+        # 70% del tiempo subida, 30% caida
+        peak_time = self.time_limit * 0.7
         base_users = 50 
         
-        # Calculamos 'k' para que en el segundo final (time_limit) alcancemos el total_users
-        # k = ln(total / base) / time_limit
-        k = math.log(self.total_users / base_users) / max(1, self.time_limit)
-        
-        try:
-            user_count = base_users * math.exp(k * self.relative_time)
-        except OverflowError:
-            user_count = self.total_users
+        if self.relative_time <= peak_time:
+            # Subida 
+
+            # Calculamos 'k' para que en el segundo final (time_limit) alcancemos el total_users
+            # k = ln(total / base) / time_limit
+            k = math.log(self.total_users / base_users) / max(1, peak_time)
+
+            try:
+                user_count = base_users * math.exp(k * self.relative_time)
+            except OverflowError:
+                user_count = self.total_users
+        else:
+            # Bajada
+            time_down = self.relative_time - peak_time
+            remaining_time = self.time_limit - peak_time
+            drop_rate = (self.total_users - base_users) / max(1, remaining_time)
+            user_count = self.total_users - (drop_rate * time_down)
             
-        # Tope de seguridad
-        user_count = min(user_count, self.total_users)
-        
-        return (round(user_count))
+        return user_count
     
     def step(self):
-        # Configuramos los escalones
-        step_duration_seconds = 60 # Cada 1 minuto damos un salto
-        users_per_step = self.total_users * 0.10 # Saltos del 10% del total
-        base_users = 100
+        mid_time = self.time_limit / 2
+
+        # Calculamos dinamicamente el tamaño de los escalones
+        step_duration_seconds = max(15, self.time_limit // 10) # 10 escalones en total aprox
+        users_per_step = (self.total_users - self.user_base) / 5 # Sube en 5 escalones fuertes
         
-        # La división entera
-        current_step_index = self.relative_time // step_duration_seconds
-        
-        user_count = base_users + (users_per_step * current_step_index)
-        
-        # Tope de seguridad
-        user_count = min(user_count, self.total_users)
-        
-        return (round(user_count))
+        if self.relative_time <= mid_time:
+            # subida
+            current_step_index = self.relative_time // step_duration_seconds
+            user_count = self.user_base + (users_per_step * current_step_index)
+        else:
+            # bajada
+
+            # cuantos escalones logramos subir
+            peak_steps = mid_time // step_duration_seconds
+            peak_users = self.user_base + (users_per_step * peak_steps)
+            
+            # cuantos escalones debemos bajar
+            time_down = self.relative_time - mid_time
+            steps_down_index = time_down // step_duration_seconds
+            user_count = peak_users - (users_per_step * steps_down_index)
+
+        return user_count
