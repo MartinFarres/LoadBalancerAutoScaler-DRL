@@ -72,7 +72,7 @@ class LoadBalancerEnv(gym.Env):
                 "decision": float(scale_desision) 
             }
             requests.post(f"{self.api_url}/action", json=payload)
-            time.sleep(0.3) # Ajustado para no desincronizar metricas
+            time.sleep(3) # Ajustado para no desincronizar metricas
             self.actual_state = self.get_real_metrics()
         else:
             # Actualizar estado simulado
@@ -192,7 +192,7 @@ class LoadBalancerEnv(gym.Env):
         # Pesos re-ajustados 
         W_LATENCY = 2.0      
         W_ERRORS = 50.0      
-        W_COST = 1.5         
+        W_COST = 1.0         
         W_SATURATION = 1.0   
         
         if cant_active_containers == 0:
@@ -220,16 +220,11 @@ class LoadBalancerEnv(gym.Env):
         avg_latency /= cant_active_containers
         
         # Calculo penalizaciones
-        latency_penalty = W_LATENCY * avg_latency
+        latency_penalty = W_LATENCY * (avg_latency ** 2) # Penalizacion exponencial
         error_penalty = W_ERRORS * total_errors
         cost_penalty = W_COST * (cant_active_containers / self.n_max)
         
         total_reward -= (latency_penalty + error_penalty + cost_penalty)
-        
-        # #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
-        # scale_decision = action[-1]
-        # if 0.3 <= scale_decision <= 0.7:
-        #     total_reward -= 0.01 
 
         # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
