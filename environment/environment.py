@@ -138,13 +138,81 @@ class LoadBalancerEnv(gym.Env):
             
         return np.array(new_state, dtype=np.float32)
 
+
+    def get_dynamic_simulated_workload(self):
+
+        # Inicializamos las variables de estado la primera vez
+        if not hasattr(self, 'sim_traffic_fn') or (self.current_step - self.sim_fn_start_step >= self.sim_fn_duration):
+            # Decidimos los tiempos limites y funciones a usar
+            self.sim_traffic_fn = np.random.randint(0, 4)
+            self.sim_fn_start_step = self.current_step
+            self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
+            
+            self.sim_total_users = 450 
+            
+            # Se generan los valores necesarios para cada funcion
+            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_min = self.sim_total_users * np.random.uniform(0.05, 0.20)
+            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_base = self.sim_total_users * np.random.uniform(0.02, 0.15)
+            self.sim_scale_rate = (self.sim_total_users - self.sim_base) / (self.sim_fn_duration / 2)
+
+        relative_step = self.current_step - self.sim_fn_start_step
+        mid_step = self.sim_fn_duration / 2
+        workload = 10.0 # Valor por defecto
+
+        # 0: Double Wave
+        if self.sim_traffic_fn == 0:
+            import math
+            workload = (
+                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 5) ** 2)
+                + (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 10) ** 2)
+                + self.sim_min
+            )
+            
+        # 1: Lineal
+        elif self.sim_traffic_fn == 1:
+            if relative_step <= mid_step:
+                workload = self.sim_base + (self.sim_scale_rate * relative_step)
+            else:
+                peak = self.sim_base + (self.sim_scale_rate * mid_step)
+                time_down = relative_step - mid_step
+                workload = peak - (self.sim_scale_rate * time_down)
+
+        # 2: Exponencial
+        elif self.sim_traffic_fn == 2:
+            import math
+            peak_time = self.sim_fn_duration * 0.7
+            base_users = max(10, self.sim_base)
+            if relative_step <= peak_time:
+                k = math.log(self.sim_total_users / base_users) / max(1, peak_time)
+                workload = base_users * math.exp(k * relative_step)
+            else:
+                time_down = relative_step - peak_time
+                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time)
+                workload = self.sim_total_users - (drop_rate * time_down)
+
+        # 3: Step (Escalones)
+        elif self.sim_traffic_fn == 3:
+            step_size = max(5, self.sim_fn_duration // 10)
+            users_per_step = (self.sim_total_users - self.sim_base) / 5
+            if relative_step <= mid_step:
+                current_step_idx = relative_step // step_size
+                workload = self.sim_base + (users_per_step * current_step_idx)
+            else:
+                peak_steps = mid_step // step_size
+                peak_users = self.sim_base + (users_per_step * peak_steps)
+                steps_down = (relative_step - mid_step) // step_size
+                workload = peak_users - (users_per_step * steps_down)
+
+        return max(10, min(workload, self.sim_total_users))
+
     def get_simulated_metrics(self, action):
         """
         TODO: modelo matemático que simula la CPU y Latencia 
         """
 
-        current_step = self.current_step
-        total_workload = max(10, 50 * (1 + np.sin(2 * np.pi * current_step / 50)) + np.random.normal(0, 2))
+        total_workload = self.get_dynamic_simulated_workload()
         
         new_state = np.zeros(self.n_max * 6, dtype=np.float32)
 
