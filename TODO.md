@@ -5,3 +5,4 @@
 - Agregar mas funciones de workload (ej: funciones con tendencia, funciones con estacionalidad)
 - Agregar mas metricas de evaluacion
 - Agregar mas modelos de prediccion ( baseline, otros modelos de ML random forest?, DQN? )
+- Hacer get_metricsreal() con programa en c para optimizar los tiempos 
