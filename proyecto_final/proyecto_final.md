@@ -46,7 +46,12 @@ En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que li
 
 ### Justificacion
 
-Para este proyecto se ha decidido por utilizar el algoritmo PPO
+Para este proyecto se ha decidido utilizar el algoritmo PPO:
+-  **DQN** originalmente trabaja con estados discretos, a diferencia de **PPO** tiene una mejor reaccion ante metricas continuas como uso porcentual 
+-  La politica de recorte para que los cambios no sean tan abruptos permiten que las acciones del cluster no oscilen levantando y dando de baja muchos contenedores continuamente 
+-  Mientras que **DQN** se limita a estimar el valor de una accion, **PPO**, utiliza una arquitectura Actor-Critic, lo cual permite que el agente aprenda no solo a maximizar el rendimiento, sino a reducir la varianza, lo que se traduce en un escalado mucho más predecible y menos errático.
+
+
 
 # Diseño Experimental
 
@@ -58,6 +63,21 @@ Se deberá presentar una sección en donde se describa todo el proceso realizado
 - Un detalle y justificación de los experimentos realizados a fin de determinar los resultados. Este deberá incluir tablas y/o gráficos que resuman los resultados.
 
 Evitar incluir en esta sección código fuente. Este se puede incluir como un apéndice al final del documento. Si es posible, incluir pequeños fragmentos de pseudo-código de ser necesario.
+
+## Métricas de Desempeño
+Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
+
+- **Uso de la CPU (cpu_usg):** Uso de CPU por contenedor, normalizado para identificar la carga computacional.
+
+- **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representan el consumo porcentual y absoluto de memoria RAM, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM).
+
+- **Latencia (latency):** Tiempo de respuesta de las peticiones, métrica crítica para la experiencia de usuario.
+
+- **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado.
+
+- **Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
+
+
 
 # Análisis y discusión de resultados
 
