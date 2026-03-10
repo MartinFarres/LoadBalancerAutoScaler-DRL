@@ -77,6 +77,33 @@ Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO
 
 - **Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
 
+## Herramientas Utilizadas
+
+Para realizar las pruebas y poner en marcha el sistema, se usaron las siguientes herramientas:
+
+- **Docker:** Se usó para crear los contenedores de los microservicios. Esto asegura que la aplicación corra siempre igual y que podamos medir exactamente cuánta CPU y RAM gasta cada parte.
+
+- **Docker-Compose:** Se utilizó para manejar el conjunto de los contenedores. Es la pieza clave que permite al algoritmo subir o bajar la cantidad de instancias (escalar) de forma sencilla mediante comandos.
+
+- **Stable Baselines3:** Es el framework de aprendizaje por refuerzo basado en PyTorch que proporciona la infraestructura necesaria para la ejecución de PPO. Fue seleccionado por su robustez y por ofrecer implementaciones optimizadas que garantizan la estabilidad de los gradientes durante el entrenamiento del agente.
+
+- **OpenAI Gymnasium:** Es la interfaz estándar utilizada para abstraer el cluster de Docker como un entorno de aprendizaje. Proporciona el marco necesario para simular estados y ejecutar acciones, permitiendo así el entrenamiento sistemático del agente.
+
+- **Pydantic:** Se usó para definir y validar los modelos de datos de las métricas (ContainerMetrics) y las acciones (AgentAction). Esto sirve para que, si una medición de Docker viene mal o incompleta, el sistema no falle y los datos siempre tengan el formato correcto antes de entrar al algoritmo.
+
+- **Locust:** Se utilizó como la herramienta de generación de carga para simular el tráfico de usuarios reales sobre el sistema. Su función fue poner a prueba al modelo en un entorno de "cluster funcional", permitiendo observar cómo responde el agente ante demandas de tráfico auténticas en lugar de depender únicamente de datos simulados 
+
+## Proceso de entrenamiento
+
+Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos si no que se opto por el uso de datos generados de manera aleatoria para mejorar los resultados del proceso de aprendizaje.
+
+### Generación de datos y entornos de entrenamiento
+Para el desarrollo del agente, se definieron dos fuentes de datos distintas que permitieron una evolución progresiva del aprendizaje:
+
+- *Entorno Simulado:* En la fase inicial de entrenamiento, se utilizaron funciones matemáticas con ruido gaussiano para generar señales de carga sintéticas. Este enfoque permitió simular comportamientos estocásticos del sistema, proporcionando al agente un entorno controlado pero variable donde aprender las políticas de escalado sin depender de la infraestructura física acelerando el proceso de preentrenamiento.
+
+- *Entorno Real con Locust:* Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
+
 
 
 # Análisis y discusión de resultados
