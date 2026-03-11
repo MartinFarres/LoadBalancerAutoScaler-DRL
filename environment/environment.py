@@ -64,25 +64,25 @@ class LoadBalancerEnv(gym.Env):
         self.current_step += 1
 
         raw_weights = action[:self.n_max]
-        scale_desition = action[-1]
+        scale_desision = action[-1]
         
         if not self.simulated:
             payload = {
                 "weights": raw_weights.tolist(),
-                "decision": float(scale_desition) 
+                "decision": float(scale_desision) 
             }
             requests.post(f"{self.api_url}/action", json=payload)
-            time.sleep(0.3) # Ajustado para no desincronizar metricas
+            time.sleep(3) # Ajustado para no desincronizar metricas
             self.actual_state = self.get_real_metrics()
         else:
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
-            if scale_desition > 0.8:
+            if scale_desision >= 0.7:
                 for i in range(self.n_max):
                     if not self.sim_active_containers[i]:
                         self.sim_active_containers[i] = True
                         break
-            elif scale_desition < 0.2:
+            elif scale_desision <= 0.3:
                 for i in range(self.n_max - 1, 0, -1): # Recorre desde el final hasta el penultimo asegurando al menos 1 activo
                     if self.sim_active_containers[i]:
                         self.sim_active_containers[i] = False
@@ -138,13 +138,81 @@ class LoadBalancerEnv(gym.Env):
             
         return np.array(new_state, dtype=np.float32)
 
+
+    def get_dynamic_simulated_workload(self):
+
+        # Inicializamos las variables de estado la primera vez
+        if not hasattr(self, 'sim_traffic_fn') or (self.current_step - self.sim_fn_start_step >= self.sim_fn_duration):
+            # Decidimos los tiempos limites y funciones a usar
+            self.sim_traffic_fn = np.random.randint(0, 4)
+            self.sim_fn_start_step = self.current_step
+            self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
+            
+            self.sim_total_users = 450 
+            
+            # Se generan los valores necesarios para cada funcion
+            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_min = self.sim_total_users * np.random.uniform(0.05, 0.20)
+            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_base = self.sim_total_users * np.random.uniform(0.02, 0.15)
+            self.sim_scale_rate = (self.sim_total_users - self.sim_base) / (self.sim_fn_duration / 2)
+
+        relative_step = self.current_step - self.sim_fn_start_step
+        mid_step = self.sim_fn_duration / 2
+        workload = 10.0 # Valor por defecto
+
+        # 0: Double Wave
+        if self.sim_traffic_fn == 0:
+            import math
+            workload = (
+                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 5) ** 2)
+                + (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 10) ** 2)
+                + self.sim_min
+            )
+            
+        # 1: Lineal
+        elif self.sim_traffic_fn == 1:
+            if relative_step <= mid_step:
+                workload = self.sim_base + (self.sim_scale_rate * relative_step)
+            else:
+                peak = self.sim_base + (self.sim_scale_rate * mid_step)
+                time_down = relative_step - mid_step
+                workload = peak - (self.sim_scale_rate * time_down)
+
+        # 2: Exponencial
+        elif self.sim_traffic_fn == 2:
+            import math
+            peak_time = self.sim_fn_duration * 0.7
+            base_users = max(10, self.sim_base)
+            if relative_step <= peak_time:
+                k = math.log(self.sim_total_users / base_users) / max(1, peak_time)
+                workload = base_users * math.exp(k * relative_step)
+            else:
+                time_down = relative_step - peak_time
+                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time)
+                workload = self.sim_total_users - (drop_rate * time_down)
+
+        # 3: Step (Escalones)
+        elif self.sim_traffic_fn == 3:
+            step_size = max(5, self.sim_fn_duration // 10)
+            users_per_step = (self.sim_total_users - self.sim_base) / 5
+            if relative_step <= mid_step:
+                current_step_idx = relative_step // step_size
+                workload = self.sim_base + (users_per_step * current_step_idx)
+            else:
+                peak_steps = mid_step // step_size
+                peak_users = self.sim_base + (users_per_step * peak_steps)
+                steps_down = (relative_step - mid_step) // step_size
+                workload = peak_users - (users_per_step * steps_down)
+
+        return max(10, min(workload, self.sim_total_users))
+
     def get_simulated_metrics(self, action):
         """
         TODO: modelo matemático que simula la CPU y Latencia 
         """
 
-        current_step = self.current_step
-        total_workload = max(10, 50 * (1 + np.sin(2 * np.pi * current_step / 50)) + np.random.normal(0, 2))
+        total_workload = self.get_dynamic_simulated_workload()
         
         new_state = np.zeros(self.n_max * 6, dtype=np.float32)
 
@@ -176,7 +244,7 @@ class LoadBalancerEnv(gym.Env):
                     cpu_usage,       # cpu_usg
                     0.3,             # ram_usg_pct
                     1.0,             # ram_total_normalize
-                    latency_ms / 1000, # latency (segundos)
+                    min(1.0, latency_ms / 2000.0), # latency normalizada a 2000ms
                     errors,          # error_rate
                     1.0              # status (ACTIVO)
                 ]
@@ -192,7 +260,7 @@ class LoadBalancerEnv(gym.Env):
         # Pesos re-ajustados 
         W_LATENCY = 2.0      
         W_ERRORS = 50.0      
-        W_COST = 1.5         
+        W_COST = 1.0         
         W_SATURATION = 1.0   
         
         if cant_active_containers == 0:
@@ -220,15 +288,16 @@ class LoadBalancerEnv(gym.Env):
         avg_latency /= cant_active_containers
         
         # Calculo penalizaciones
-        latency_penalty = W_LATENCY * avg_latency
+        latency_penalty = W_LATENCY * (avg_latency ** 2) # Penalizacion exponencial
         error_penalty = W_ERRORS * total_errors
         cost_penalty = W_COST * (cant_active_containers / self.n_max)
         
         total_reward -= (latency_penalty + error_penalty + cost_penalty)
-        
-        #Fuerzo al agente a tomar una desicion de escalado penalizando la indecision
+
+        # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
-        if 0.4 < scale_decision < 0.6:
-            total_reward -= 0.01 
+        if scale_decision <= 0.3 or scale_decision >= 0.7:
+            # Pequeña penalidad por ejecutar la acción de escalar
+            total_reward -= 0.05 
         
         return total_reward

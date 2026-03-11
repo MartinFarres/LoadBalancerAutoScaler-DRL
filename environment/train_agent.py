@@ -41,7 +41,8 @@ def train_phase_2_real_world():
     # solo queremos que haga un ajuste fino (fine-tuning) al ruido de la red real.
     model.learning_rate = 0.0001
 
-    model.learn(total_timesteps=500, tb_log_name="PPO_Phase2_Real_FineTuned")
+    # total_timesteps debe ser un multiplo o por lo menos mayor que n_steps
+    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned")
 
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada")
