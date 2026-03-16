@@ -81,6 +81,21 @@ class StressGenerator(LoadTestShape):
             case 3:
                 user_count = self.step()
 
+
+        # Ruido (Jitter)
+        # vibracion del 5%
+        standar_deviation = user_count * 0.05
+        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
+        user_count += jitter
+
+        # Outlier (Evento Extremo)
+        # generacion random de probabilidad 2% para extremos
+        prob = np.random.randint(1, 101)
+        if prob <= 2:
+            user_count = self.user_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
+        elif prob >= 99:
+            user_count = self.total_users# simulamos un pico (ddos, viral, etc)
+
         # Tope de seguridad: Nunca menos de 10 usuarios, nunca más del total_users
         user_count = max(10, min(user_count, self.total_users))
 

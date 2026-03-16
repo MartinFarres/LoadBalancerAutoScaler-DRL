@@ -238,6 +238,22 @@ class LoadBalancerEnv(gym.Env):
                 steps_down = (relative_step - mid_step) // step_size
                 workload = peak_users - (users_per_step * steps_down)
 
+        # Ruido (Jitter)
+        # vibracion del 5%
+        standar_deviation = workload * 0.05
+        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
+        workload += jitter
+
+        # Outlier (Evento Extremo)
+        # generacion random de probabilidad 2% para extremos
+        prob = np.random.randint(1, 101)
+        if prob <= 2:
+            workload = self.sim_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
+        elif prob >= 99:
+            workload = self.sim_total_users # simulamos un pico (ddos, viral, etc)
+
+
+
         return max(10, min(workload, self.sim_total_users))
 
     def get_simulated_metrics(self, action):
