@@ -1,16 +1,3 @@
-# TrainingMetricsCallback - El que hace de "cerebro" del seguimiento de entrenamiento PPO
-# =======================================================================================
-# Este callback esta constantemente vigilando como evoluciona el entrenamiento, como un
-# entrenador personal que anota cada detalle relevante:
-#
-# 1. Como le va al modelo (rewards, losses, entropia)
-# 2. Si los gradientes se estan comportando bien o si hay problemas (normas L2)
-#
-# Uso:
-#     from callbacks import TrainingMetricsCallback
-#     callback = TrainingMetricsCallback(save_dir="./training_results")
-#     model.learn(total_timesteps=10000, callback=callback)
-
 import os
 import csv
 import numpy as np
@@ -19,15 +6,6 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 
 class TrainingMetricsCallback(BaseCallback):
-    # El callback que registra todo lo que pasa durante el entrenamiento.
-    # Va anotando:
-    #     - Metricas de rollout: reward promedio que obtiene el agente, cuanto duran los episodios
-    #     - Metricas de entrenamiento: policy_loss (que tan mal le esta errando al agente),
-    #       value_loss (que tan mal predice valores), entropy (cuanto esta explorando),
-    #       clip_fraction (que tanto esta limitado por el clipping)
-    #     - Metricas de gradiente: norma L2 de gradientes de policy y value networks
-    # Al final genera:
-    #     - Un CSV con todas las metricas para poder analizar todo en detalle
     
     def __init__(self, save_dir: str = "./training_results", verbose: int = 0):
         
@@ -206,6 +184,7 @@ class TrainingMetricsCallback(BaseCallback):
             ep_rew = self._get_logger_value('rollout/ep_rew_mean', 0.0)
             ep_len = self._get_logger_value('rollout/ep_len_mean', 0.0)
             
+            # Las guardamos en el historial de rollout
             self.rollout_history['rollout/ep_rew_mean'].append(ep_rew)
             self.rollout_history['rollout/ep_len_mean'].append(ep_len)
             self.rollout_history['timestep'].append(self.model.num_timesteps)
@@ -217,6 +196,7 @@ class TrainingMetricsCallback(BaseCallback):
             clip_fraction = self._get_logger_value('train/clip_fraction', 0.0)
             explained_variance = self._get_logger_value('train/explained_variance', 0.0)
             
+            # Las guardamos en el historial de entrenamiento
             self.train_history['train/policy_loss'].append(policy_loss)
             self.train_history['train/value_loss'].append(value_loss)
             self.train_history['train/entropy_loss'].append(entropy_loss)
@@ -345,7 +325,7 @@ class TrainingMetricsCallback(BaseCallback):
         plt.close(fig2)
         
         # ============================================================
-        # GRAFICO 3: Como变化 la Entropia (que tanto explora el agente) - Barras
+        # GRAFICO 3: Entropia (que tanto explora el agente) - Barras
         # ============================================================
         fig3, ax3 = plt.subplots(figsize=(12, 5))
         
@@ -544,6 +524,7 @@ class GradientCallback(BaseCallback):
             
             policy_grad_norm = np.sqrt(policy_grad_norm)
             
+            # Guardamos en el historial para despues poder ver la evolucion
             self.gradient_history.append(policy_grad_norm)
             self.timestep_history.append(current_step)
             
