@@ -1,6 +1,9 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from environment import LoadBalancerEnv
+##
+from callbacks import TrainingMetricsCallback
+##
 import sys
 import os
 
@@ -21,7 +24,8 @@ def train_phase_1_simulation():
                 ent_coef=0.01,                
                 tensorboard_log=directory_logs)
 
-    model.learn(total_timesteps=300000, tb_log_name="PPO_Phase1_Simulated") 
+    metricts_callback = TrainingMetricsCallback(save_dir="./training_results")
+    model.learn(total_timesteps=300000, tb_log_name="PPO_Phase1_Simulated", callback=metricts_callback) 
 
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
@@ -36,13 +40,14 @@ def train_phase_2_real_world():
         return
 
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs)
+
     
     # Reducimos el learning rate para que no "olvide" lo aprendido de golpe,
     # solo queremos que haga un ajuste fino (fine-tuning) al ruido de la red real.
     model.learning_rate = 0.0001
 
     # total_timesteps debe ser un multiplo o por lo menos mayor que n_steps
-    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned")
+    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metricts_callback)
 
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada")
