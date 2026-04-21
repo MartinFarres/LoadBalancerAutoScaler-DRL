@@ -1,57 +1,78 @@
 # Introducción
 
-En el despliegue de microservicios y aplicaciones modernas, la eficiencia operativa depende de la capacidad del sistema para adaptarse a la demanda variable. Docker se ha consolidado como herramienta fundamental para la contenerización y gestión de entornos de desarrollo y producción debido a su simplicidad y portabilidad. Sin embargo, un reto dentro de entornos basados en estas herramientas es el autoescalado, que es la capacidad de ajustar dinámicamente el número de contenedores en ejecución para responder a picos de tráfico o carga de procesamiento. 
+En el despliegue de microservicios y aplicaciones modernas, la eficiencia operativa depende de la capacidad del sistema para adaptarse a la demanda variable. Docker se ha consolidado como una herramienta fundamental para la contenerización y gestión de entornos de desarrollo y producción debido a su simplicidad y portabilidad. Sin embargo, un reto crítico dentro de estos entornos es el autoescalado y el balanceo de cargas. El autoescalado es la capacidad de ajustar dinámicamente el número de contenedores en ejecución para responder a picos de tráfico o carga de procesamiento. Por su parte, el balanceo de cargas consiste en la distribución eficiente del tráfico entrante entre los servidores o nodos disponibles.
 
-Se ha empleado aprendizaje por refuerzo para el entrenamiento del agente ya que le permitirá aprender a optimizar sus acciones en un entorno cambiante maximizando las recompensas obtenidas, permitiéndole aumentar o reducir la cantidad de contenedores disponibles, balanceando la carga entre ellos y evitando así la saturación de servicios.
+En la industria, se suelen emplear algoritmos estándar para resolver estos problemas. _Round Robin_, _Weighted Round Robin_ y _Least Connections_ son soluciones muy comunes en el ámbito tecnológico para lidiar con el balanceo de cargas. Por otro lado, el escalado de servicios suele basarse en la definición de umbrales estáticos que condicionan el aumento o la retracción de los recursos. Ante las limitaciones de estos enfoques rígidos, este proyecto propone la incorporación de modelos de aprendizaje automático (_Machine Learning_) para buscar una mejora sobre las soluciones tradicionales. Para ello, se ha empleado un modelo de aprendizaje por refuerzo, el cual permite al agente aprender a optimizar sus acciones en un entorno cambiante, maximizando las recompensas obtenidas. De esta forma, el agente toma decisiones para aumentar o reducir la cantidad de contenedores disponibles y balancear la carga entre ellos, evitando así la saturación de los servicios.
 
-Este tipo de problemas cuentan con la dificultad de tener que obtener en tiempo real métricas correspondientes a los contenedores como el uso de CPU, memoria RAM, latencia de red y el nivel de actividad presente en los contenedores. Para simular el entorno de ejecución se ha utilizado la Biblioteca Gymnasium de OpenAI con un entorno personalizado para emplear las métricas necesarias, el entorno observado y una función de recompensa.
-
+Este tipo de problemas cuenta con la dificultad inherente de tener que obtener, en tiempo real, métricas correspondientes a los contenedores, tales como el uso de CPU, memoria RAM, latencia de red y la tasa de errores. Para simular y evaluar este proceso, se ha utilizado la biblioteca Gymnasium de OpenAI, creando un entorno personalizado que integra el vector de observaciones del sistema, el espacio de acciones del orquestador y una función de recompensa diseñada específicamente para este ecosistema.
 
 ## Marco teórico
 
-Se deberá poner especial énfasis en aquellos elementos que van a utilizarse para proponer una implementación. Incluir una descripción teórica y general del funcionamiento del (o los) algoritmos y sus principales elementos propuestos para lidiar con el problema elegido.  
-Como así también justificar debidamente la elección de dicho algoritmo. Consultar bibliografía externa, la cual deberá estar debidamente citada.
+### Escalado automático y Balanceo de Cargas en arquitecturas de microservicios
 
-El autoescalado en arquitecturas de microservicios se basa en la capacidad de replicar unidades de ejecución de forma aislada. Docker permite esta encapsulación mediante contenedores que comparten el kernel del sistema operativo host, lo que garantiza un levantamiento de instancias mucho más veloz que las máquinas virtuales tradicionales.
+Si bien el escalado automático está estrechamente relacionado con el balanceo de cargas, no son el mismo concepto, aunque a menudo operan en conjunto. Ambos procesos afectan la asignación de recursos de un sistema para lidiar con la carga de trabajo, velando siempre por la optimización y evitando tanto las sobrecargas como los estados pasivos (desperdicio de recursos).
+
+#### Auto Scaler (Autoescalador)
+
+El _auto-scaling_, conocido comúnmente como "escalado automático", es una característica de la computación en la nube que asigna dinámicamente los recursos computacionales en función de la demanda del sistema. Se utiliza para garantizar que las aplicaciones cuenten con los recursos necesarios para mantener una disponibilidad constante y alcanzar los objetivos de rendimiento, promoviendo además un uso eficiente del hardware y minimizando los costos operativos (IBM)[https://www.ibm.com/mx-es/think/topics/autoscaling].
+
+Existen varias estrategias de escalado: horizontal, vertical, dinámico, predictivo y programado. Sin embargo, este proyecto se enfocará principalmente en dos enfoques: el escalado horizontal y el escalado dinámico.
+
+El **escalado horizontal** (también conocido como _scale-out/scale-in_) es la acción de instanciar o eliminar más nodos, contenedores o máquinas virtuales a un entorno de computación. A diferencia del escalado vertical (que implica añadir más recursos de hardware como RAM o CPU a un servidor ya existente), el escalado horizontal es una solución enfocada en la replicación y la arquitectura distribuida, ideal para contenedores Docker.
+
+El **escalado dinámico** es una política que reacciona a las necesidades de recursos a medida que ocurren, ajustando la asignación en función de la utilización en tiempo real. Con esta política, los sistemas pueden activar instancias adicionales de forma automática cuando se alcanza un umbral específico de estrés, como un alto porcentaje de uso de la CPU o un incremento brusco en la latencia de las peticiones.
+
+#### Load Balancer (Balanceador de Carga)
+
+El _Load Balancing_ es la práctica de distribuir el trabajo computacional entre dos o más computadoras. En el mundo de la infraestructura de redes, se utiliza principalmente para dividir el tráfico entrante (como peticiones HTTP) entre varios servidores. De esta forma, se busca reducir el estrés sobre cada nodo individual, haciendo que el clúster sea más eficiente, aumente su rendimiento general, reduzca la latencia y minimice la tasa de errores provocada por la saturación de los servicios [https://www.cloudflare.com/learning/performance/what-is-load-balancing/].
+
+![alt text](./resources/without-loadbalancing.png)
+![alt text](./resources/with-loadbalancing.png)
+
+La acción de balancear la carga la lleva a cabo una herramienta o aplicación denominada _Load Balancer_ (LB), la cual puede ser un dispositivo físico en la red o, como es tendencia actual, un componente basado completamente en software (como HAProxy o Nginx). El funcionamiento en ambos casos es idéntico: cuando llega una petición de un usuario, el LB decide a qué servidor activo enviarla, repitiendo este proceso para cada conexión nueva. Para determinar el destino de cada petición, el LB se rige por algoritmos que pueden clasificarse en estáticos o dinámicos.
+
+Los **Load Balancers estáticos** distribuyen la carga de trabajo de forma predeterminada sin tomar en consideración el estado real de los servidores. Por ejemplo, un nodo puede estar procesando una carga del 80% de su CPU, mientras que su vecino tiene solo un 20% ocupado; sin embargo, un LB estático ignorará estas métricas. En este grupo destaca el algoritmo _Round Robin_, el cual es un método de distribución que envía las peticiones de forma equitativa y secuencial al siguiente servidor en la lista.
+
+Los **Load Balancers dinámicos**, en cambio, monitorean continuamente la telemetría y el rendimiento de los servidores (como el uso de CPU, memoria o el tiempo de respuesta) antes de enrutar el tráfico. Estos algoritmos buscan inteligentemente las instancias menos saturadas o con conexiones más rápidas para asignarles el trabajo, garantizando así una distribución adaptativa que responde a los cuellos de botella del sistema en tiempo real.
 
 ### Aprendizaje por Refuerzo (Reinforcement Learning)
 
 El Aprendizaje por Refuerzo (RL) es un paradigma del aprendizaje automático centrado en el entrenamiento de un agente capaz de tomar decisiones secuenciales en un entorno dinámico con el objetivo de maximizar una recompensa acumulada a largo plazo. A diferencia del aprendizaje supervisado, el agente no recibe ejemplos de "decisiones correctas", sino que aprende a través de un proceso iterativo de prueba y error, evaluando el impacto de sus acciones en el estado del sistema.
 
 Este proceso de aprendizaje se realiza mediante los siguientes elementos fundamentales:
+
 - **Agente:** Es la entidad lógica que observa el sistema y ejecuta las acciones de escalado.
 - **Entorno (Environment):** Representa el cluster de contenedores y la infraestructura de Docker donde operan los servicios.
 - **Estado ($S$):** Es la representación cuantitativa de la situación actual, como los porcentajes de uso de CPU y memoria reportados por la API de Docker.
 - **Acciones ($A$):** El conjunto de decisiones disponibles para el agente, específicamente: incrementar réplicas, reducir réplicas o mantener el estado actual.
 - **Recompensa ($R$):** Una señal escalar que retroalimenta al agente. Una recompensa positiva indica una gestión eficiente de recursos, mientras que una negativa puede señalar saturación del servicio o desperdicio de hardware.
-- **Política ($\pi$):** La estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado.El objetivo final del entrenamiento es hallar una política óptima ($\pi^*$) que garantice la estabilidad del cluster bajo cualquier escenario de carga. 
+- **Política ($\pi$):** La estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado.El objetivo final del entrenamiento es hallar una política óptima ($\pi^*$) que garantice la estabilidad del cluster bajo cualquier escenario de carga.
 
 Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, se recurre a algoritmos avanzados como Q-Learning, Deep Q-Network (DQN) y Proximal Policy Optimization (PPO).
 
 ### Proximal Policy Optimization (PPO)
 
-Proximal Policy Optimization (PPO) es un algoritmo de aprendizaje por refuerzo encuadrado en los métodos de policy gradient. 
+Proximal Policy Optimization (PPO) es un algoritmo de aprendizaje por refuerzo encuadrado en los métodos de policy gradient.
 
 A diferencia de los algoritmos basados en valores (como Q-Learning), PPO optimiza directamente la política del agente, mediante una red neuronal que produce una distribución de probabilidades sobre el espacio de acciones para cada estado observado.Este algoritmo pertenece a la familia de los métodos Actor-Critic, donde el aprendizaje se divide en dos estructuras complementarias:
+
 - **Actor:** Una red neuronal encargada de generar la política $\pi(a|s)$, determinando la probabilidad de seleccionar cada acción ante un estado dado.
 - **Critic:** Una red que estima la función de valor $V(s)$, proporcionando una evaluación del estado actual que sirve para calcular la ventaja (advantage), guiando así la dirección y magnitud de las actualizaciones del actor.
 
-La principal innovación de PPO radica en su función objetivo de proximidad (clipped surrogate objective). Está diseñada para resolver el problema de la inestabilidad en el entrenamiento, evitando que la política sufra cambios bruscos entre iteraciones. 
+La principal innovación de PPO radica en su función objetivo de proximidad (clipped surrogate objective). Está diseñada para resolver el problema de la inestabilidad en el entrenamiento, evitando que la política sufra cambios bruscos entre iteraciones.
 Para ello, el algoritmo calcula un ratio de probabilidad entre la política nueva y la anterior:
 
 $$r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$$
 
 En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que limita el valor de $r_t(\theta)$ dentro de un rango determinado. Este proceso asegura que las actualizaciones sean pequeñas y controladas, manteniendo la nueva política "cerca" de la anterior, garantizando una convergencia más estable y robusta.
 
-
 ### Justificacion
 
 Para este proyecto se ha decidido utilizar el algoritmo PPO:
--  **DQN** originalmente trabaja con estados discretos, a diferencia de **PPO** tiene una mejor reaccion ante metricas continuas como uso porcentual 
--  La politica de recorte para que los cambios no sean tan abruptos permiten que las acciones del cluster no oscilen levantando y dando de baja muchos contenedores continuamente 
--  Mientras que **DQN** se limita a estimar el valor de una accion, **PPO**, utiliza una arquitectura Actor-Critic, lo cual permite que el agente aprenda no solo a maximizar el rendimiento, sino a reducir la varianza, lo que se traduce en un escalado mucho más predecible y menos errático.
 
-
+- **DQN** originalmente trabaja con estados discretos, a diferencia de **PPO** tiene una mejor reaccion ante metricas continuas como uso porcentual
+- La politica de recorte para que los cambios no sean tan abruptos permiten que las acciones del cluster no oscilen levantando y dando de baja muchos contenedores continuamente
+- Mientras que **DQN** se limita a estimar el valor de una accion, **PPO**, utiliza una arquitectura Actor-Critic, lo cual permite que el agente aprenda no solo a maximizar el rendimiento, sino a reducir la varianza, lo que se traduce en un escalado mucho más predecible y menos errático.
 
 # Diseño Experimental
 
@@ -65,6 +86,7 @@ Se deberá presentar una sección en donde se describa todo el proceso realizado
 Evitar incluir en esta sección código fuente. Este se puede incluir como un apéndice al final del documento. Si es posible, incluir pequeños fragmentos de pseudo-código de ser necesario.
 
 ## Métricas de Desempeño
+
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
 - **Uso de la CPU (cpu_usg):** Uso de CPU por contenedor, normalizado para identificar la carga computacional.
@@ -91,20 +113,19 @@ Para realizar las pruebas y poner en marcha el sistema, se usaron las siguientes
 
 - **Pydantic:** Se usó para definir y validar los modelos de datos de las métricas (ContainerMetrics) y las acciones (AgentAction). Esto sirve para que, si una medición de Docker viene mal o incompleta, el sistema no falle y los datos siempre tengan el formato correcto antes de entrar al algoritmo.
 
-- **Locust:** Se utilizó como la herramienta de generación de carga para simular el tráfico de usuarios reales sobre el sistema. Su función fue poner a prueba al modelo en un entorno de "cluster funcional", permitiendo observar cómo responde el agente ante demandas de tráfico auténticas en lugar de depender únicamente de datos simulados 
+- **Locust:** Se utilizó como la herramienta de generación de carga para simular el tráfico de usuarios reales sobre el sistema. Su función fue poner a prueba al modelo en un entorno de "cluster funcional", permitiendo observar cómo responde el agente ante demandas de tráfico auténticas en lugar de depender únicamente de datos simulados
 
 ## Proceso de entrenamiento
 
 Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos si no que se opto por el uso de datos generados de manera aleatoria para mejorar los resultados del proceso de aprendizaje.
 
 ### Generación de datos y entornos de entrenamiento
+
 Para el desarrollo del agente, se definieron dos fuentes de datos distintas que permitieron una evolución progresiva del aprendizaje:
 
-- *Entorno Simulado:* En la fase inicial de entrenamiento, se utilizaron funciones matemáticas con ruido gaussiano para generar señales de carga sintéticas. Este enfoque permitió simular comportamientos estocásticos del sistema, proporcionando al agente un entorno controlado pero variable donde aprender las políticas de escalado sin depender de la infraestructura física acelerando el proceso de preentrenamiento.
+- _Entorno Simulado:_ En la fase inicial de entrenamiento, se utilizaron funciones matemáticas con ruido gaussiano para generar señales de carga sintéticas. Este enfoque permitió simular comportamientos estocásticos del sistema, proporcionando al agente un entorno controlado pero variable donde aprender las políticas de escalado sin depender de la infraestructura física acelerando el proceso de preentrenamiento.
 
-- *Entorno Real con Locust:* Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
-
-
+- _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
 # Análisis y discusión de resultados
 
