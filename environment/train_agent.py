@@ -25,7 +25,7 @@ def train_phase_1_simulation():
 
     metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1")
 
-    model.learn(total_timesteps=300000, tb_log_name="PPO_Phase1_Simulated", callback=metrics_callback) 
+    model.learn(total_timesteps=3000000, tb_log_name="PPO_Phase1_Simulated", callback=metrics_callback) 
 
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
@@ -50,7 +50,7 @@ def train_phase_2_real_world():
 
     metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2")
 
-    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metrics_callback_real)
+    model.learn(total_timesteps=15000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metrics_callback_real)
 
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada.\n")

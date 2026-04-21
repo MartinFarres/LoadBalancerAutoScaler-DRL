@@ -22,7 +22,6 @@ def simulated_training():
 
 
 def real_training(processes):
-
     print("[1/1] Iniciando Entrenamiento Real... ")
     print("-" * 50)
     time.sleep(2)
@@ -31,16 +30,15 @@ def real_training(processes):
     processes.append(("PPO Training", train_process))
 
     try:
-        # esperando a que el entrenamiento termine (o a que presiones Ctrl+C)
         train_process.wait()
     except KeyboardInterrupt:
         print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
 
     down_processes(processes)
 
-def test_agent(processes):
 
-    print("[1/1] Iniciando Testing Agente...")
+def test_agent(processes):
+    print("[1/1] Iniciando Testing Agente PPO...")
     print("-" * 50)
     time.sleep(2)
    
@@ -50,7 +48,39 @@ def test_agent(processes):
     try:
         test_process.wait()
     except KeyboardInterrupt:
-        print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
+    
+    down_processes(processes)
+
+
+def test_baseline(processes):
+    print("[1/1] Iniciando Testing Baseline (Umbrales Clásicos y Round Robin)...")
+    print("-" * 50)
+    time.sleep(2)
+   
+    test_process = subprocess.Popen(["python", "environment/baseline_agent.py"])
+    processes.append(("Baseline Industry Testing", test_process))
+
+    try:
+        test_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
+    
+    down_processes(processes)
+
+
+def test_pid(processes):
+    print("[1/1] Iniciando Testing Baseline (Controlador PID)...")
+    print("-" * 50)
+    time.sleep(2)
+   
+    test_process = subprocess.Popen(["python", "environment/baseline_pid.py"])
+    processes.append(("Baseline PID Testing", test_process))
+
+    try:
+        test_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
     
     down_processes(processes)
 
@@ -107,6 +137,7 @@ def init_processes():
 
     return processes
 
+
 def down_processes(processes):
     print("\n [Limpieza] Apagando servicios en segundo plano...")
     for nombre, proceso in processes:
@@ -121,20 +152,32 @@ def down_processes(processes):
         
     print("Terminado.")
 
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        comando = sys.argv[1]
+        comando = sys.argv
         
         if comando == "simulado":
             simulated_training()
         elif comando == "real":
             real_training(init_processes())
-        elif comando == "test":
+        elif comando == "test_ppo":
             test_agent(init_processes())
+        elif comando == "test_baseline":
+            test_baseline(init_processes())
+        elif comando == "test_pid":
+            test_pid(init_processes())
         else:
             print(f"Comando desconocido: {comando}")
     else:
-        print("Iniciando pipeline completo (Simulación -> Real -> Testing )...")
+        print("Iniciando pipeline completo (Simulación -> Real -> Testing Múltiple)...")
         simulated_training()
         real_training(init_processes())
+        
+        print("\n\n" + "="*50)
+        print("INICIANDO BATERÍA DE PRUEBAS COMPARATIVAS")
+        print("="*50)
+        
+        test_baseline(init_processes())
+        test_pid(init_processes())
         test_agent(init_processes())
