@@ -39,15 +39,13 @@ class TrainingMetricsCallback(BaseCallback):
     
     def _get_logger_value(self, key: str, default: float = 0.0):
         try:
-            if hasattr(self.model, 'env'):
-                env = self.model.env
-                while hasattr(env, 'env'):
-                    if hasattr(env, 'logger') and hasattr(env.logger, 'name_to_value'):
-                        if key in env.logger.name_to_value: return float(env.logger.name_to_value[key])
-                    env = env.env
-                if hasattr(env, 'logger') and hasattr(env.logger, 'name_to_value'):
-                    if key in env.logger.name_to_value: return float(env.logger.name_to_value[key])
-        except Exception: pass
+            if hasattr(self.model, 'logger') and self.model.logger is not None:
+                if key in self.model.logger.name_to_value:
+                    return float(self.model.logger.name_to_value[key])
+        except Exception as e: 
+            print(f"Error leyendo métrica {key}: {e}")
+            pass
+            
         return default
     
     def _on_step(self):
