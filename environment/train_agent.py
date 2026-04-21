@@ -1,9 +1,8 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from environment import LoadBalancerEnv
-##
 from callbacks import TrainingMetricsCallback
-##
+from visualizer import Visualizer
 import sys
 import os
 
@@ -11,7 +10,7 @@ directory_logs = "./logs_tensorboard/"
 MODEL_PATH = "ppo_lb_simulated_base"
 
 def train_phase_1_simulation():
-    print("Iniciando entrenamiento en Simulacion Pura)...")
+    print("Iniciando entrenamiento en Simulacion Pura...")
     
     env_sim = Monitor(LoadBalancerEnv(simulated=True))
     
@@ -24,14 +23,20 @@ def train_phase_1_simulation():
                 ent_coef=0.01,                
                 tensorboard_log=directory_logs)
 
-    metricts_callback = TrainingMetricsCallback(save_dir="./training_results")
-    model.learn(total_timesteps=300000, tb_log_name="PPO_Phase1_Simulated", callback=metricts_callback) 
+    metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1")
+
+    model.learn(total_timesteps=300000, tb_log_name="PPO_Phase1_Simulated", callback=metrics_callback) 
 
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
 
+    print("Generando curva de aprendizaje para Fase 1...")
+    viz = Visualizer(save_dir="./resultados_graficos/phase1")
+    viz.plot_learning_curve("./training_results/phase1/training_metrics.csv")
+
+
 def train_phase_2_real_world():
-    print("Iniciando entrenamiento con docker + HAProxy)...")
+    print("Iniciando entrenamiento con docker + HAProxy...")
     
     env_real = Monitor(LoadBalancerEnv(simulated=False))
     
@@ -40,18 +45,19 @@ def train_phase_2_real_world():
         return
 
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs)
-
     
-    # Reducimos el learning rate para que no "olvide" lo aprendido de golpe,
-    # solo queremos que haga un ajuste fino (fine-tuning) al ruido de la red real.
     model.learning_rate = 0.0001
 
-    # total_timesteps debe ser un multiplo o por lo menos mayor que n_steps
-    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metricts_callback)
+    metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2")
+
+    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metrics_callback_real)
 
     model.save("ppo_lb_production_ready")
-    print("Fase 2 completada")
+    print("Fase 2 completada.\n")
 
+    print("Generando curva de aprendizaje para Fase 2...")
+    viz = Visualizer(save_dir="./resultados_graficos/phase2")
+    viz.plot_learning_curve("./training_results/phase2/training_metrics.csv")
 
 
 if __name__ == "__main__":

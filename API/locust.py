@@ -82,6 +82,8 @@ class StressGenerator(LoadTestShape):
                 user_count = self.step()
 
 
+        user_count = max(10.0, user_count)
+
         # Ruido (Jitter)
         # vibracion del 5%
         standar_deviation = user_count * 0.05

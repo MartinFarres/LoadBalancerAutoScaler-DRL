@@ -238,6 +238,8 @@ class LoadBalancerEnv(gym.Env):
                 steps_down = (relative_step - mid_step) // step_size
                 workload = peak_users - (users_per_step * steps_down)
 
+        workload = max(10.0, workload)
+
         # Ruido (Jitter)
         # vibracion del 5%
         standar_deviation = workload * 0.05
@@ -282,12 +284,12 @@ class LoadBalancerEnv(gym.Env):
             if self.sim_active_containers[i]:
                 # Capacidad del nodo 50 'unidades' de trabajo
                 node_load = total_workload * norm_weights[i]
-                cpu_usage = min(1.0, node_load / 50.0) 
+                overload_ratio = node_load / 50.0
+                cpu_usage = min(1.0, overload_ratio) 
                 
-               
-                latency_ms = 10 + (cpu_usage ** 4) * 500 
+                latency_ms = 10 + (overload_ratio ** 2) * 150 
                 
-                errors = max(0.0, (cpu_usage - 0.9) * 10) if cpu_usage > 0.9 else 0.0
+                errors = max(0.0, min(1.0, (overload_ratio - 0.9) * 0.3))
                 
                 new_state[idx:idx+6] = [
                     cpu_usage,       # cpu_usg
