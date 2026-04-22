@@ -8,7 +8,7 @@ def simulated_training():
 
     print("[1/1] Iniciando Entrenamiento Simulado... ")
 
-    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_1_simulation"])
+    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_1_simulation"])
     processes.append(("PPO Training Simulated", train_process))
 
     try:
@@ -26,7 +26,7 @@ def real_training(processes):
     print("-" * 50)
     time.sleep(2)
     
-    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_2_real_world"])
+    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_2_real_world"])
     processes.append(("PPO Training", train_process))
 
     try:
@@ -42,7 +42,7 @@ def test_agent(processes):
     print("-" * 50)
     time.sleep(2)
    
-    test_process = subprocess.Popen(["python", "environment/test_agent.py"])
+    test_process = subprocess.Popen([sys.executable, "environment/test_agent.py"])
     processes.append(("PPO Testing", test_process))
 
     try:
@@ -92,7 +92,7 @@ def init_processes():
 
     print("[1/4] Iniciando API Bridge (FastAPI)...")
     api_process = subprocess.Popen(
-        ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "warning"], 
+        [sys.executable, "-m", "uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "warning"], 
         cwd="API"
     )
     processes.append(("API Bridge", api_process))
@@ -120,7 +120,7 @@ def init_processes():
     print("[3/4] Iniciando tráfico de estrés (Locust Headless)...")
     # -u 50: 50 usuarios concurrentes | -r 1: entran 1 por segundo
     locust_process = subprocess.Popen([
-        "locust", "-f", "API/locust.py", 
+        sys.executable, "-m", "locust", "-f", "API/locust.py", 
         "--headless",  
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -130,7 +130,7 @@ def init_processes():
 
     print("[4/4] Iniciando TensorBoard...")
 
-    tb_process = subprocess.Popen(["tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tb_process = subprocess.Popen([sys.executable, "-m", "tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     processes.append(("TensorBoard", tb_process))
 
     print("    TensorBoard disponible en http://localhost:6006")
@@ -155,7 +155,7 @@ def down_processes(processes):
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        comando = sys.argv
+        comando = sys.argv[1]
         
         if comando == "simulado":
             simulated_training()

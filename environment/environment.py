@@ -44,9 +44,13 @@ class LoadBalancerEnv(gym.Env):
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
 
+        # Memoria para la Espera Dinamica
+        self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
+        self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
         
         if not self.simulated:
             requests.get(f"{self.api_url}/reset")
@@ -73,8 +77,29 @@ class LoadBalancerEnv(gym.Env):
                 "decision": float(scale_desision) 
             }
             requests.post(f"{self.api_url}/action", json=payload)
-            time.sleep(3) # Ajustado para no desincronizar metricas
+
+            # ESPERA DINAMICA
+            # Escalo el cluster?
+            is_scaling = scale_desision >= 0.7 or scale_desision <= 0.3
+            
+            # Cambio de pesos drastico?
+            weight_diff = np.max(np.abs(raw_weights - self.last_weights))
+            is_shifting_traffic = weight_diff > 0.15
+            
+            if is_scaling:
+                # Cambio fisico: HAProxy se reinicia y Docker levanta/baja contenedores.
+                time.sleep(3.0) 
+            elif is_shifting_traffic:
+                # Cambio logico: HAProxy redirige tráfico, necesitamos que la latencia y CPU se actualicen.
+                time.sleep(1.5)
+            else:
+                # Estado de reposo: El agente no hizo nada. Solo leemos el siguiente tick de CPU.
+                time.sleep(0.4) 
+                
             self.actual_state = self.get_real_metrics()
+            
+            # Guardamos los pesos actuales para compararlos en el proximo step
+            self.last_weights = np.copy(raw_weights)
         else:
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
