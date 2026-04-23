@@ -104,6 +104,7 @@ _Donde:_
 - **$S$:** Es el tiempo base de servicio (la latencia natural de procesar una petición cuando el servidor está completamente vacío y no hay cola).
 
 Finalmente, la tasa de errores de red (peticiones rechazadas o HTTP 5xx) se modeló mediante una función de activación Sigmoide desplazada:
+
 $$E_{rate} = \frac{1}{1 + e^{-k(\rho - \rho_0)}}$$
 
 [3]
