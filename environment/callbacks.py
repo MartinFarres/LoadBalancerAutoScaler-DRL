@@ -1,5 +1,6 @@
 import os
 import csv
+import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 class TrainingMetricsCallback(BaseCallback):
@@ -43,9 +44,27 @@ class TrainingMetricsCallback(BaseCallback):
                 if key in self.model.logger.name_to_value:
                     return float(self.model.logger.name_to_value[key])
         except Exception as e: 
-            print(f"Error leyendo métrica {key}: {e}")
+            print(f"Error leyendo métrica {key} del logger: {e}")
             pass
             
+        return default
+
+    def _get_ep_info(self, key: str, default: float = 0.0):
+        """
+        Lee directamente del búfer de memoria interna del Monitor de SB3.
+        Esto esquiva los problemas de sincronización del logger.
+        """
+        try:
+            if hasattr(self.model, 'ep_info_buffer') and self.model.ep_info_buffer:
+                if key == 'rollout/ep_rew_mean':
+                    # 'r' es la llave interna que usa SB3 para el Reward (Recompensa)
+                    return float(np.mean([ep_info['r'] for ep_info in self.model.ep_info_buffer]))
+                elif key == 'rollout/ep_len_mean':
+                    # 'l' es la llave interna que usa SB3 para la Longitud (Length)
+                    return float(np.mean([ep_info['l'] for ep_info in self.model.ep_info_buffer]))
+        except Exception as e:
+            print(f"Error leyendo {key} del buffer: {e}")
+            pass
         return default
     
     def _on_step(self):
@@ -53,12 +72,15 @@ class TrainingMetricsCallback(BaseCallback):
     
     def _on_rollout_end(self):
         try:
-            self.rollout_history['rollout/ep_rew_mean'].append(self._get_logger_value('rollout/ep_rew_mean'))
-            self.rollout_history['rollout/ep_len_mean'].append(self._get_logger_value('rollout/ep_len_mean'))
+            # Ahora usamos la lectura directa de memoria para recompensa y longitud
+            self.rollout_history['rollout/ep_rew_mean'].append(self._get_ep_info('rollout/ep_rew_mean'))
+            self.rollout_history['rollout/ep_len_mean'].append(self._get_ep_info('rollout/ep_len_mean'))
             self.rollout_history['timestep'].append(self.model.num_timesteps)
             
+            # Las métricas de pérdida de la red sí se pueden leer del logger normal
             self.train_history['train/policy_loss'].append(self._get_logger_value('train/policy_gradient_loss'))
             self.train_history['train/value_loss'].append(self._get_logger_value('train/value_loss'))
             
             self._append_to_csv()
-        except Exception: pass
+        except Exception: 
+            pass
