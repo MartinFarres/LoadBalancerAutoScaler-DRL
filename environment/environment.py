@@ -284,10 +284,6 @@ class LoadBalancerEnv(gym.Env):
         return max(10, min(workload, self.sim_total_users))
 
     def get_simulated_metrics(self, action):
-        """
-        TODO: modelo matemático que simula la CPU y Latencia 
-        """
-
         total_workload = self.get_dynamic_simulated_workload()
         
         new_state = np.zeros(self.n_max * 6, dtype=np.float32)

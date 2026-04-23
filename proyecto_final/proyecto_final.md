@@ -208,9 +208,14 @@ Incluir la bibliografía utilizada para el trabajo. Es importante referenciar en
 
 **Ejemplo:**
 
-[1] Barrat, A., Barthelemy, M., & Vespignani, A. (2008). _Dynamical processes on complex networks_. Cambridge University Press.  
+[1] Barrat, A., Barthelemy, M., & Vespignani, A. (2008). _Dynamical processes on complex networks_. Cambridge University Press.
+
 [2] Bengio, Y., Courville, A., & Vincent, P. (2013). _Representation learning: A review and new perspectives_. IEEE Transactions on Pattern Analysis and Machine Intelligence, 35(8), 1798–1828.
+
 [3] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
+
 [4] Tesauro, G., Jong, N. K., Das, R., & Bennani, M. N. (2006). A hybrid reinforcement learning approach to autonomic resource allocation. In Proceedings of the 2006 IEEE International Conference on Autonomic Computing.
+
 [5] Menascé, D. A., & Almeida, V. A. F. (2001). Capacity Planning for Web Services: Metrics, Models, and Methods. Prentice Hall.
+
 [6] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
