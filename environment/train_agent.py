@@ -5,9 +5,29 @@ from callbacks import TrainingMetricsCallback
 from visualizer import Visualizer
 import sys
 import os
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+
+class StepLoggerCallback(BaseCallback):
+    """
+    Callback personalizado para imprimir el progreso paso a paso 
+    durante el lento entrenamiento en el entorno real.
+    """
+    def _on_step(self) -> bool:
+        # Extraemos la recompensa del paso actual
+        reward = self.locals.get('rewards', [0.0])[0]
+        
+        # Extraemos la información del entorno (nodos activos)
+        infos = self.locals.get('infos', [{}])
+        activos = infos[0].get('activos', 0)
+        
+        # Imprimimos una línea limpia por cada paso
+        print(f"-> [Real Training] Step: {self.num_timesteps:04d} | Nodos Activos: {activos} | Reward: {reward:>7.2f}")
+        
+        return True
+
 
 directory_logs = "./logs_tensorboard/"
-MODEL_PATH = "ppo_lb_simulated_base"
+MODEL_PATH = "./logs_checkpoints/ppo_real_env_2000_steps"
 
 def train_phase_1_simulation():
     print("Iniciando entrenamiento en Simulacion Pura...")
@@ -46,11 +66,19 @@ def train_phase_2_real_world():
 
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs)
     
+    model.verbose = 1
     model.learning_rate = 0.0001
 
     metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2")
+    logger_callback = StepLoggerCallback()
+    checkpoint_callback = CheckpointCallback(
+        save_freq=2000,                  
+        save_path='./logs_checkpoints/',
+        name_prefix='ppo_real_env'       
+    )
 
-    model.learn(total_timesteps=15000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=metrics_callback_real)
+
+    model.learn(total_timesteps=5000, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback])
 
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada.\n")

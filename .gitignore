@@ -92,3 +92,4 @@ Pipfile.lock
 
 # Agent save
 # ppo_lb_agent_*.zip
+/logs_checkpoints/
