@@ -307,22 +307,71 @@ class LoadBalancerEnv(gym.Env):
         for i in range(self.n_max):
             idx = i * 6
             if self.sim_active_containers[i]:
-                # Capacidad del nodo 50 'unidades' de trabajo
+                # M/M/1 -----------------------------------------------------------------------------------------
+                
+                # Params Base
+                max_capacity = 50.0  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                base_latency_ms = 15.0 # S: Tiempo de servicio base sin hacer cola
+                
+                # Tasa de llegada (lambda)
                 node_load = total_workload * norm_weights[i]
-                overload_ratio = node_load / 50.0
-                cpu_usage = min(1.0, overload_ratio) 
                 
-                latency_ms = 10 + (overload_ratio ** 2) * 150 
+                # Utilización del Sistema (rho = lambda / mu)
+                rho = node_load / max_capacity 
                 
-                errors = max(0.0, min(1.0, (overload_ratio - 0.9) * 0.3))
+                # CALCULO DE CPU ------------------------------------------------
+                # Se añade ruido gaussiano 
+                cpu_noise = np.random.normal(0, 0.02)
+                cpu_usage = max(0.0, min(1.0, rho + cpu_noise))
+                
+                # CALCULO DE LATENCIA ----------------------------------------------
+                # Basado en el teorema M/M/1: Tiempo de Respuesta E[T] = S / (1 - rho)
+                if rho < 0.95:
+                    # la cola crece exponencialmente al acercarse al 100%
+                    latency_ms = base_latency_ms / (1.0 - rho)
+                else:
+                    # Si el sistema está saturado (rho >= 0.95), la cola "explota" y se degrada fuertemente.
+                    latency_ms = base_latency_ms * 20.0 + (rho - 0.95) * 5000.0
+                
+                # Jitter de red (ruido en la latencia)
+                latency_ms += abs(np.random.normal(0, latency_ms * 0.05))
+                
+                # CALCULO DE ERRORES ---------------------------------------------
+                # Simulamos un desbordamiento de bufer (Queue overflow). 
+                # Usamos una función sigmoide para que la tasa de errores pase de 0% a 100% de forma suave 
+                # pero rápida cuando la capacidad supera el 100% (rho > 1.0)
+                if rho < 0.9:
+                    errors = 0.0
+                else:
+                    # 1 / (1 + e^(-k*(x-x0)))
+                    errors = 1.0 / (1.0 + math.exp(-15.0 * (rho - 1.05)))
+
+
+                # CALCULO DE RAM (Ley de Little) --------------------------------
+                # L: El num de peticiones concurrentes dentro del contenedor (procesandose + en cola)
+                if rho < 0.95:
+                    L_concurrent = rho / (1.0 - rho)
+                else:
+                    # Si el sistema colapsa, la acumulación de peticiones en la RAM se dispara
+                    L_concurrent = (0.95 / 0.05) + (rho - 0.95) * 200.0
+                
+                # Definimos la huella de memoria
+                base_ram_footprint = 0.15 # 15% de RAM ocupada solo por tener el contenedor encendido (Python/Flask)
+                ram_per_request = 0.015   # Cada petición viva en el sistema consume un 1.5% adicional de RAM
+                
+                ram_usage = base_ram_footprint + (L_concurrent * ram_per_request)
+                
+                # Ruido simulando el Garbage Collector de Python (liberando y ocupando memoria)
+                ram_noise = np.random.normal(0, 0.02)
+                ram_usage = min(1.0, max(0.0, ram_usage + ram_noise))
                 
                 new_state[idx:idx+6] = [
-                    cpu_usage,       # cpu_usg
-                    0.3,             # ram_usg_pct
-                    1.0,             # ram_total_normalize
-                    min(1.0, latency_ms / 2000.0), # latency normalizada a 2000ms
-                    errors,          # error_rate
-                    1.0              # status (ACTIVO)
+                    min(1.0, max(0.0, cpu_usage)),             # cpu_usg
+                    ram_usage,                                 # ram_usg_pct 
+                    1.0,                                       # ram_total_normalize
+                    min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
+                    min(1.0, max(0.0, errors)),                # error_rate
+                    1.0                                        # status (ACTIVO)
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
@@ -338,6 +387,7 @@ class LoadBalancerEnv(gym.Env):
         W_ERRORS = 50.0      
         W_COST = 1.0         
         W_SATURATION = 1.0   
+        W_RAM_SATURATION = 1.0
         
         if cant_active_containers == 0:
             return -200.0 
@@ -360,6 +410,9 @@ class LoadBalancerEnv(gym.Env):
                 
                 if cpu_pct > 0.80:
                     total_reward -= W_SATURATION * (cpu_pct - 0.80)
+
+                if ram_pct > 0.85:
+                    total_reward -= W_RAM_SATURATION * (ram_pct - 0.85)
                     
         avg_latency /= cant_active_containers
         
