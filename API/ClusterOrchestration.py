@@ -63,6 +63,7 @@ class ClusterOrchestration():
                                        network="lbas_network", 
                                        detach=True, 
                                        name=f"{self.node_name}_{i}",
+                                       nano_cpus=500000000, # limits container to 50% of the cpus capacity
                                        labels={"role": "lbas_node"})
         
            
