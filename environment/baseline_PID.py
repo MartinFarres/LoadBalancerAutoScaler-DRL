@@ -28,10 +28,10 @@ class PIDController:
         self.previous_error = error
         return output
 
-def run_pid_baseline(simulated=True, steps=5000):
+def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.csv'):
     print("Iniciando prueba del Baseline PID (Teoría de Control Clásica)...")
     
-    env = LoadBalancerEnv(simulated=simulated, max_steps=steps)
+    env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max)
     obs, info = env.reset()
     
     # Target: Mantener la CPU promedio al 60% (0.60)
@@ -85,7 +85,22 @@ def run_pid_baseline(simulated=True, steps=5000):
         if terminated or truncated:
             break
 
+    
+    import pandas as pd
+    import os
+    formatted_file = f"test_pid_n{n_max}_i{steps}_{file}"
+    os.makedirs("./training_results/testing_results", exist_ok=True)
+    save_path = os.path.join("./training_results/testing_results", formatted_file)
+    pd.DataFrame({
+        'cpu_promedio': hist_cpu_total,
+        'ram_promedio': hist_ram_total,
+        'latencia_promedio': hist_latency,
+        'tasa_errores': hist_errors
+    }).to_csv(save_path, index=False)
+    print(f"Métricas del PID guardadas en: {save_path}")
+
     print("Generando tabla resumen del Baseline PID...")
+
     viz.generate_testing_summary_table(
         cpu_history=hist_cpu_total,
         ram_history=hist_ram_total,

@@ -7,10 +7,10 @@ class TrainingMetricsCallback(BaseCallback):
     """
     Callback personalizado para guardar el historial de entrenamiento de PPO en un archivo CSV.
     """
-    def __init__(self, save_dir: str = "./training_results", verbose: int = 0):
+    def __init__(self, save_dir: str = "./training_results", file_name: str = "training_metrics.csv", verbose: int = 0):
         super().__init__(verbose)
         self.save_dir = save_dir
-        self.csv_path = os.path.join(save_dir, "training_metrics.csv")
+        self.csv_path = os.path.join(save_dir, file_name)
         os.makedirs(save_dir, exist_ok=True)
         
         # Historial de métricas
