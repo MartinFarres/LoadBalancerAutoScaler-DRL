@@ -37,18 +37,20 @@ Los **Load Balancers dinámicos**, en cambio, monitorean continuamente la teleme
 
 ### Aprendizaje por Refuerzo (Reinforcement Learning)
 
-El Aprendizaje por Refuerzo (RL) es un paradigma del aprendizaje automático centrado en el entrenamiento de un agente capaz de tomar decisiones secuenciales en un entorno dinámico con el objetivo de maximizar una recompensa acumulada a largo plazo. A diferencia del aprendizaje supervisado, el agente no recibe ejemplos de "decisiones correctas", sino que aprende a través de un proceso iterativo de prueba y error, evaluando el impacto de sus acciones en el estado del sistema.
+El Aprendizaje por Refuerzo (RL) constituye un paradigma del aprendizaje automático en el que un agente aprende a mapear situaciones a acciones con el objetivo de maximizar una señal de recompensa numérica acumulada a lo largo del tiempo (Sutton & Barto, 2018). A diferencia del aprendizaje supervisado, donde el sistema recibe ejemplos etiquetados provistos por un supervisor externo, el agente de RL no es instruido sobre qué acciones tomar, sino que debe descubrir cuáles producen mayor recompensa mediante un proceso iterativo de prueba y error (Russell & Norvig, 2010).
 
-Este proceso de aprendizaje se realiza mediante los siguientes elementos fundamentales:
+En el contexto del presente trabajo, estos componentes se instancian de la siguiente manera.
 
-- **Agente:** Es la entidad lógica que observa el sistema y ejecuta las acciones de escalado.
-- **Entorno (Environment):** Representa el cluster de contenedores y la infraestructura de Docker donde operan los servicios.
-- **Estado ($S$):** Es la representación cuantitativa de la situación actual, como los porcentajes de uso de CPU y memoria reportados por la API de Docker.
-- **Acciones ($A$):** El conjunto de decisiones disponibles para el agente, específicamente: incrementar réplicas, reducir réplicas o mantener el estado actual.
-- **Recompensa ($R$):** Una señal escalar que retroalimenta al agente. Una recompensa positiva indica una gestión eficiente de recursos, mientras que una negativa puede señalar saturación del servicio o desperdicio de hardware.
-- **Política ($\pi$):** La estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado.El objetivo final del entrenamiento es hallar una política óptima ($\pi^*$) que garantice la estabilidad del cluster bajo cualquier escenario de carga.
+El **agente** constituye la entidad lógica responsable de observar el estado del sistema y seleccionar las acciones de escalado a ejecutar. Su dominio de actuación es el **entorno (environment)**, conformado por el cluster de contenedores y la infraestructura Docker sobre la que operan los servicios.
+
+Para tomar decisiones, el agente percibe el **estado ($S$)** del entorno, una representación cuantitativa de la situación actual del sistema, compuesta por métricas como el porcentaje de uso de CPU y memoria reportadas por la API de Docker. A partir de dicha representacion, selecciona una de las **acciones ($A$)** disponibles: Incrementar el numero de réplicas, reducirlo  o mantener la configuracion actual.
+
+Tras ejecutar cada  acción, el agente recibe una **recompensa ($R$)** que retroalimenta al agente. Un valor positivo indica una gestión eficiente de los recursos, uno negativo refleja condiciones indeseables como la saturación del servicio o la subutilización del hardware. Este mecanismo de retroalimentación es el que permite al agente ajustar su comportamiento sin requerir ejemplos supervisados (Sutton & Barto, 2018).
+
+El nucleo de nuestro agente es su **política ($\pi$)**, ésta representa la estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado. El objetivo del entrenamiento es encontrar una política óptima ($\pi^*$) que maximice la recompensa acumulada esperada bajo cualquier escenario de carga, garantizando así la estabilidad del cluster (Russell & Norvig, 2010).
 
 Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, se recurre a algoritmos avanzados como Q-Learning, Deep Q-Network (DQN) y Proximal Policy Optimization (PPO).
+
 
 ### Proximal Policy Optimization (PPO)
 
