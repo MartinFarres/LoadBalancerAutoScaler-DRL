@@ -169,19 +169,13 @@ Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO
 
 ## Herramientas Utilizadas
 
-Para realizar las pruebas y poner en marcha el sistema, se usaron las siguientes herramientas:
+La implementación del sistema integra herramientas encargadas tanto de la gestión de la infraestructura de contenedores, el entrenamiento del agente mediante aprendizaje por refuerzo, y la validación del comportamiento bajo condiciones de carga representativas.
 
-- **Docker:** Se usó para crear los contenedores de los microservicios. Esto asegura que la aplicación corra siempre igual y que podamos medir exactamente cuánta CPU y RAM gasta cada parte.
+Para el desarrollo e implementación del sistema se utilizó **Python** como lenguaje principal. La contenerización de los servicios backend y la gestión del cluster fueron realizadas mediante **Docker**, administrado programáticamente a través de su SDK oficial, junto a **HAProxy 3.0** como balanceador de carga. 
 
-- **Docker-Compose:** Se utilizó para manejar el conjunto de los contenedores. Es la pieza clave que permite al algoritmo subir o bajar la cantidad de instancias (escalar) de forma sencilla mediante comandos.
+La interfaz entre el agente y la infraestructura fue definida utilizando **Gymnasium**, con el tipo `spaces.Box` es posible abstraer el cluster como un entorno de RL compatible con bibliotecas de entrenamiento. El entrenamiento del agente PPO se implementó sobre **Stable-Baselines3**, seleccionado para proveer una implementación optimizada y validada del algoritmo sobre **PyTorch**.
 
-- **Stable Baselines3:** Es el framework de aprendizaje por refuerzo basado en PyTorch que proporciona la infraestructura necesaria para la ejecución de PPO. Fue seleccionado por su robustez y por ofrecer implementaciones optimizadas que garantizan la estabilidad de los gradientes durante el entrenamiento del agente.
-
-- **OpenAI Gymnasium:** Es la interfaz estándar utilizada para abstraer el cluster de Docker como un entorno de aprendizaje. Proporciona el marco necesario para simular estados y ejecutar acciones, permitiendo así el entrenamiento sistemático del agente.
-
-- **Pydantic:** Se usó para definir y validar los modelos de datos de las métricas (ContainerMetrics) y las acciones (AgentAction). Esto sirve para que, si una medición de Docker viene mal o incompleta, el sistema no falle y los datos siempre tengan el formato correcto antes de entrar al algoritmo.
-
-- **Locust:** Se utilizó como la herramienta de generación de carga para simular el tráfico de usuarios reales sobre el sistema. Su función fue poner a prueba al modelo en un entorno de "cluster funcional", permitiendo observar cómo responde el agente ante demandas de tráfico auténticas en lugar de depender únicamente de datos simulados
+ La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
 
 ## Proceso de entrenamiento
 
