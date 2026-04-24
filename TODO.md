@@ -1,8 +1,1 @@
-- Agregar generacion random de amplitud, frecuencias, coeficientes, etc para cada funcion de workload (real y simulado)
-- Agregar generacion random de ruido para cada funcion de workload (real y simulado)
-- Agregar generacion random de outliers para cada funcion de workload (real y simulado)
-- Mejorar generacion de graficos
 - Agregar mas funciones de workload (ej: funciones con tendencia, funciones con estacionalidad)
-- Agregar mas metricas de evaluacion
-- Agregar mas modelos de prediccion ( baseline, otros modelos de ML random forest?, DQN? )
-- Hacer get_metricsreal() con programa en c para optimizar los tiempos 

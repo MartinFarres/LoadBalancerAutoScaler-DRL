@@ -8,7 +8,7 @@ def simulated_training():
 
     print("[1/1] Iniciando Entrenamiento Simulado... ")
 
-    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_1_simulation"])
+    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_1_simulation"])
     processes.append(("PPO Training Simulated", train_process))
 
     try:
@@ -22,35 +22,65 @@ def simulated_training():
 
 
 def real_training(processes):
-
     print("[1/1] Iniciando Entrenamiento Real... ")
     print("-" * 50)
     time.sleep(2)
     
-    train_process = subprocess.Popen(["python", "environment/train_agent.py", "train_phase_2_real_world"])
+    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_2_real_world"])
     processes.append(("PPO Training", train_process))
 
     try:
-        # esperando a que el entrenamiento termine (o a que presiones Ctrl+C)
         train_process.wait()
     except KeyboardInterrupt:
         print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
 
     down_processes(processes)
 
-def test_agent(processes):
 
-    print("[1/1] Iniciando Testing Agente...")
+def test_agent(processes):
+    print("[1/1] Iniciando Testing Agente PPO...")
     print("-" * 50)
     time.sleep(2)
    
-    test_process = subprocess.Popen(["python", "environment/test_agent.py"])
+    test_process = subprocess.Popen([sys.executable, "environment/test_agent.py"])
     processes.append(("PPO Testing", test_process))
 
     try:
         test_process.wait()
     except KeyboardInterrupt:
-        print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
+    
+    down_processes(processes)
+
+
+def test_baseline(processes):
+    print("[1/1] Iniciando Testing Baseline (Umbrales Clásicos y Round Robin)...")
+    print("-" * 50)
+    time.sleep(2)
+   
+    test_process = subprocess.Popen(["python", "environment/baseline_agent.py"])
+    processes.append(("Baseline Industry Testing", test_process))
+
+    try:
+        test_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
+    
+    down_processes(processes)
+
+
+def test_pid(processes):
+    print("[1/1] Iniciando Testing Baseline (Controlador PID)...")
+    print("-" * 50)
+    time.sleep(2)
+   
+    test_process = subprocess.Popen(["python", "environment/baseline_pid.py"])
+    processes.append(("Baseline PID Testing", test_process))
+
+    try:
+        test_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
     
     down_processes(processes)
 
@@ -62,7 +92,7 @@ def init_processes():
 
     print("[1/4] Iniciando API Bridge (FastAPI)...")
     api_process = subprocess.Popen(
-        ["uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "warning"], 
+        [sys.executable, "-m", "uvicorn", "bridge:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "warning"], 
         cwd="API"
     )
     processes.append(("API Bridge", api_process))
@@ -90,7 +120,7 @@ def init_processes():
     print("[3/4] Iniciando tráfico de estrés (Locust Headless)...")
     # -u 50: 50 usuarios concurrentes | -r 1: entran 1 por segundo
     locust_process = subprocess.Popen([
-        "locust", "-f", "API/locust.py", 
+        sys.executable, "-m", "locust", "-f", "API/locust.py", 
         "--headless",  
         "-H", "http://127.0.0.1:80"
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -100,12 +130,13 @@ def init_processes():
 
     print("[4/4] Iniciando TensorBoard...")
 
-    tb_process = subprocess.Popen(["tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tb_process = subprocess.Popen([sys.executable, "-m", "tensorboard", "--logdir", "./logs_tensorboard/"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     processes.append(("TensorBoard", tb_process))
 
     print("    TensorBoard disponible en http://localhost:6006")
 
     return processes
+
 
 def down_processes(processes):
     print("\n [Limpieza] Apagando servicios en segundo plano...")
@@ -121,6 +152,7 @@ def down_processes(processes):
         
     print("Terminado.")
 
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         comando = sys.argv[1]
@@ -129,12 +161,23 @@ if __name__ == "__main__":
             simulated_training()
         elif comando == "real":
             real_training(init_processes())
-        elif comando == "test":
+        elif comando == "test_ppo":
             test_agent(init_processes())
+        elif comando == "test_baseline":
+            test_baseline(init_processes())
+        elif comando == "test_pid":
+            test_pid(init_processes())
         else:
             print(f"Comando desconocido: {comando}")
     else:
-        print("Iniciando pipeline completo (Simulación -> Real -> Testing )...")
+        print("Iniciando pipeline completo (Simulación -> Real -> Testing Múltiple)...")
         simulated_training()
         real_training(init_processes())
+        
+        print("\n\n" + "="*50)
+        print("INICIANDO BATERÍA DE PRUEBAS COMPARATIVAS")
+        print("="*50)
+        
+        test_baseline(init_processes())
+        test_pid(init_processes())
         test_agent(init_processes())

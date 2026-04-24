@@ -4,6 +4,8 @@ import csv
 import io
 import os
 import concurrent.futures
+import ctypes
+import time
 from schemas import ContainerMetrics
 
 
@@ -18,10 +20,22 @@ class ClusterOrchestration():
         self.max_memory = max_memory
         
         self.client = docker.from_env()
+        
         # Pull image or Create image in dockerfile with a functioning server
         self.image_container = self._get_or_pull("dummy_server:latest")
+        
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
+        
+        # Fast Metrics C Collector
+        self.lib = ctypes.CDLL('./libfastmetrics.so')
+        self.lib.get_container_rx_bytes.argtypes = [ctypes.c_int, ctypes.c_char_p] # Args expected
+        self.lib.get_container_rx_bytes.restype = ctypes.c_longlong # Return type expected
+        self.containersPIDs = []
+        self.containersLongIDs = []
+
+        # CPU dic for cpu_usg calculation
+        self.last_cpu_stats = {} # (cpu_ns, timestamp_ns)
 
         self.start()
 
@@ -49,8 +63,10 @@ class ClusterOrchestration():
                                        network="lbas_network", 
                                        detach=True, 
                                        name=f"{self.node_name}_{i}",
+                                       nano_cpus=500000000, # limits container to 50% of the cpus capacity
                                        labels={"role": "lbas_node"})
-
+        
+           
         # Creates HAProxy container and its configuration
         self.init_haproxy_cfg()
         self.client.containers.run(image=self.image_HAProxy, 
@@ -66,6 +82,20 @@ class ClusterOrchestration():
                                                 ports={'80/tcp': 80, '9999/tcp': 9999},
                                                 detach=True,
                                                 labels={"role":"lbas_haproxy"})
+        
+        # Gets all containers PIDs
+        for i in range(self.n_max):
+            container_attrs = self.client.containers.get(f"{self.node_name}_{i}").attrs
+            long_id = container_attrs['Id']
+            self.containersPIDs.append(container_attrs['State']['Pid'])
+            self.containersLongIDs.append(container_attrs['Id']) # Cache the 64-char Long ID
+
+            # Inicializamos el trackeo de CPU para este contenedor
+            self.last_cpu_stats[long_id] = {
+                "cpu_usage_ns": 0,
+                "timestamp_ns": time.time_ns()
+            }
+
         
         
         
@@ -155,42 +185,83 @@ class ClusterOrchestration():
         nombre_nodo = f"{self.node_name}_{i}"
         
         try:
-            # Pedimos el contenedor específico por nombre (Garantiza el orden correcto)
-            container = self.client.containers.get(nombre_nodo)
-            metric = container.stats(stream=False)
-
-            # RAM Metric ---
-            ram_usg_bytes = metric["memory_stats"]["usage"]
-            ram_limit_bytes = metric["memory_stats"]["limit"]
-
-            ram_usg_pct = ram_usg_bytes / ram_limit_bytes 
-            ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory 
+            target_pid = self.containersPIDs[i]
+            long_id = self.containersLongIDs[i]
             
-            metric_obj.ram_usg_pct = ram_usg_pct
-            metric_obj.ram_total_normalize = ram_total_normalize
-
-            # CPU Metric ---
-            cpu_actual_usage = metric["cpu_stats"]["cpu_usage"]["total_usage"]
-            cpu_last_usage = metric["precpu_stats"]["cpu_usage"]["total_usage"]
-            system_actual_usage = metric["cpu_stats"]["system_cpu_usage"]
-            system_last_usage = metric["precpu_stats"]["system_cpu_usage"]
-            count_cores = metric["cpu_stats"]["online_cpus"] or 1
-
-            delta_cpu = cpu_actual_usage - cpu_last_usage
-            delta_system = system_actual_usage - system_last_usage
+            # Metricas de red via C
+            interface_name = b"eth0" 
+            rx_bytes = self.lib.get_container_rx_bytes(target_pid, interface_name)
             
-            if delta_system > 0: 
-                cpu_usg = (delta_cpu / delta_system) * count_cores
-            else:
-                cpu_usg = 0.0
+            if rx_bytes != -1:
+                metric_obj.network_rx = rx_bytes
+                pass
 
-            metric_obj.cpu_usg = cpu_usg
+            
+            # Metricas de memoria usando File I/O Cgroups
+            # Si es una version mas vieja de linux puede ser: /sys/fs/cgroup/memory/docker/{long_id}/memory.usage_in_bytes
+            mem_path = f"/sys/fs/cgroup/system.slice/docker-{long_id}.scope/memory.current"
+            
+            if os.path.exists(mem_path):
+                with open(mem_path, 'r') as f:
+                    raw_mem = f.read().strip()
+                    # Verificamos que no esté vacío antes de convertir
+                    if raw_mem.isdigit():
+                        ram_usg_bytes = int(raw_mem)
+                        ram_limit_bytes = self.max_memory * 1024 * 1024
+                        
+                        metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes 
+                        metric_obj.ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory
+           
+            # Metricas CPU via Cgroups File I/O
+            # Si usa v1: /sys/fs/cgroup/cpuacct/docker/{long_id}/cpuacct.stat
+            cpu_path = f"/sys/fs/cgroup/system.slice/docker-{long_id}.scope/cpu.stat"
+            if os.path.exists(cpu_path):
+                # Leemos el archivo  
+                with open(cpu_path, 'r') as f:
+                    lines = f.readlines()
+                
+                usage_usec = 0
+                for line in lines:
+                    if line.startswith("usage_usec"): # buscamos 'usage_usec'
+                        parts = line.split()
+                        # parts será una lista, ej: ['usage_usec', '123456']
+                        # Aseguramos que tenga al menos 2 elementos para evitar OutOfBounds
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            usage_usec = int(parts[1]) 
+                        break
+                
+                # Convertimos a nanosegundos para tener la máxima precisión
+                current_cpu_ns = usage_usec * 1000
+                current_time_ns = time.time_ns()
+                
+                # Recuperamos los valores del step/iteración anterior
+                last_stats = self.last_cpu_stats.get(long_id, {"cpu_usage_ns": 0, "timestamp_ns": current_time_ns})
+                last_cpu_ns = last_stats["cpu_usage_ns"]
+                last_time_ns = last_stats["timestamp_ns"]
+
+                # Calculamos los deltas
+                delta_cpu = current_cpu_ns - last_cpu_ns
+                delta_time = current_time_ns - last_time_ns
+                
+                # Calculamos el uso
+                # (delta_cpu / delta_tiempo_real) equivale a
+                # (delta_cpu / delta_system) * count_cores. Nos da el uso por core.
+                # 1.0 significa 100% de 1 core.
+                if delta_time > 0 and last_cpu_ns > 0:
+                    metric_obj.cpu_usg = delta_cpu / delta_time
+                else:
+                    metric_obj.cpu_usg = 0.0
+                
+                self.last_cpu_stats[long_id] = {
+                    "cpu_usage_ns": current_cpu_ns,
+                    "timestamp_ns": current_time_ns
+                }
 
         except Exception as e:
-            # Fallback por si el contenedor murió o no responde
+            print(f"Error fetching metrics for node {i}: {e}")
             pass
 
-        # Latency, Error Rate & Status ---
+        # L7 METRICS de HAProxy
         if nombre_nodo in haproxy_stats_dict:
             metric_obj.latency = haproxy_stats_dict[nombre_nodo]["latency"]
             metric_obj.error_rate = haproxy_stats_dict[nombre_nodo]["error_rate"]
@@ -200,7 +271,6 @@ class ClusterOrchestration():
             metric_obj.error_rate = 0.0
             metric_obj.status = 0.0
 
-        # Retornamos el índice original para poder armar la lista final en orden
         return i, metric_obj
 
     def init_haproxy_cfg(self):

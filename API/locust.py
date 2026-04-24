@@ -54,12 +54,22 @@ class StressGenerator(LoadTestShape):
             
             # Se generan los valores necesarios para cada funcion
             # Se generan ahora para prevenir que se generen por cada tick
-            self.peak_one_users = self.total_users * np.random.uniform(0.5, 0.9)
+            # Double Wave
+            self.peak_one_users = self.total_users * np.random.uniform(0.2, 0.95)
             self.min_users = self.total_users * np.random.uniform(0.05, 0.20)
-            self.peak_two_users = self.total_users * np.random.uniform(0.5, 0.9)
+            self.peak_two_users = self.total_users * np.random.uniform(0.2, 0.95)
+            self.shift_peak_one = np.random.uniform(0.1 , 0.4)
+            self.shift_peak_two = np.random.uniform(0.6 , 0.9)
+            self.width_peak_one = np.random.uniform(0.05, 0.2)
+            self.width_peak_two = np.random.uniform(0.05, 0.2)
+            # Exponencial
             self.user_base = self.total_users * np.random.uniform(0.02, 0.15)
+            # Lineal
+            self.agresiveness_coeficient = np.random.uniform(0.7, 1.5) # de-formacion de las funciones para que no sean tan perfectas
             self.scaling_rate = np.random.randint(1, 10)
-            
+            # Step
+            self.step_count= np.random.randint(3, 20)
+
         # llamar a funcion y devolver resultado
         match self.function_number:
             case 0:
@@ -71,6 +81,23 @@ class StressGenerator(LoadTestShape):
             case 3:
                 user_count = self.step()
 
+
+        user_count = max(10.0, user_count)
+
+        # Ruido (Jitter)
+        # vibracion del 5%
+        standar_deviation = user_count * 0.05
+        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
+        user_count += jitter
+
+        # Outlier (Evento Extremo)
+        # generacion random de probabilidad 2% para extremos
+        prob = np.random.randint(1, 101)
+        if prob <= 2:
+            user_count = self.user_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
+        elif prob >= 99:
+            user_count = self.total_users# simulamos un pico (ddos, viral, etc)
+
         # Tope de seguridad: Nunca menos de 10 usuarios, nunca más del total_users
         user_count = max(10, min(user_count, self.total_users))
 
@@ -78,11 +105,15 @@ class StressGenerator(LoadTestShape):
 
 
     def doubleWave(self):
+        # e**(−(t−u/o​)**2)
+        # t -> relative_time
+        # u(centro) -> time_limit * shift_peak
+        # o(ancho) -> width
         user_count = (
                 (self.peak_one_users - self.min_users)
-                * math.e ** -(((self.relative_time / (self.time_limit / 10 * 2 / 3)) - 5) ** 2)
+                * math.e ** -(((self.relative_time - self.time_limit * self.shift_peak_one) / (self.time_limit * self.width_peak_one)) ** 2)
                 + (self.peak_two_users - self.min_users)
-                * math.e ** -(((self.relative_time / (self.time_limit / 10 * 2 / 3)) - 10) ** 2)
+                * math.e ** -(((self.relative_time - self.time_limit * self.shift_peak_two) / (self.time_limit * self.width_peak_two)) ** 2)
                 + self.min_users
             )
         return (round(user_count))
@@ -94,15 +125,15 @@ class StressGenerator(LoadTestShape):
 
         if (self.relative_time <= mid_time):
             # Subida
-            user_count = self.relative_time * self.scaling_rate + self.user_base
+            user_count = self.relative_time * self.scaling_rate * self.agresiveness_coeficient + self.user_base
         else:
             # Bajada 
             # Calculamos pico medio
-            peak_users = self.user_base + (self.scaling_rate * mid_time)
+            peak_users = self.user_base + (self.scaling_rate * self.agresiveness_coeficient * mid_time)
             # Tiempo bajando
             time_down = self.relative_time - mid_time
             # Restamos desde el pico
-            user_count = peak_users - (self.scaling_rate * time_down)
+            user_count = peak_users - (self.scaling_rate * self.agresiveness_coeficient * time_down)
             
         return user_count
     def exponential(self):
@@ -116,7 +147,7 @@ class StressGenerator(LoadTestShape):
 
             # Calculamos 'k' para que en el segundo final (time_limit) alcancemos el total_users
             # k = ln(total / base) / time_limit
-            k = math.log(self.total_users / base_users) / max(1, peak_time)
+            k = math.log(self.total_users / base_users) / max(1, peak_time) * self.agresiveness_coeficient
 
             try:
                 user_count = base_users * math.exp(k * self.relative_time)
@@ -126,7 +157,7 @@ class StressGenerator(LoadTestShape):
             # Bajada
             time_down = self.relative_time - peak_time
             remaining_time = self.time_limit - peak_time
-            drop_rate = (self.total_users - base_users) / max(1, remaining_time)
+            drop_rate = (self.total_users - base_users) / max(1, remaining_time) * self.agresiveness_coeficient
             user_count = self.total_users - (drop_rate * time_down)
             
         return user_count
@@ -135,8 +166,8 @@ class StressGenerator(LoadTestShape):
         mid_time = self.time_limit / 2
 
         # Calculamos dinamicamente el tamaño de los escalones
-        step_duration_seconds = max(15, self.time_limit // 10) # 10 escalones en total aprox
-        users_per_step = (self.total_users - self.user_base) / 5 # Sube en 5 escalones fuertes
+        step_duration_seconds = self.time_limit // self.step_count # Ancho steps
+        users_per_step = (self.total_users - self.user_base) / (self.step_count / 2) # Altura steps
         
         if self.relative_time <= mid_time:
             # subida

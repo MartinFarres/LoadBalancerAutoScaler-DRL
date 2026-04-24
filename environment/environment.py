@@ -3,6 +3,7 @@ import requests
 import time
 from gymnasium import spaces
 import numpy as np
+import math
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -43,9 +44,13 @@ class LoadBalancerEnv(gym.Env):
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
 
+        # Memoria para la Espera Dinamica
+        self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
+        self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
         
         if not self.simulated:
             requests.get(f"{self.api_url}/reset")
@@ -72,8 +77,29 @@ class LoadBalancerEnv(gym.Env):
                 "decision": float(scale_desision) 
             }
             requests.post(f"{self.api_url}/action", json=payload)
-            time.sleep(3) # Ajustado para no desincronizar metricas
+
+            # ESPERA DINAMICA
+            # Escalo el cluster?
+            is_scaling = scale_desision >= 0.7 or scale_desision <= 0.3
+            
+            # Cambio de pesos drastico?
+            weight_diff = np.max(np.abs(raw_weights - self.last_weights))
+            is_shifting_traffic = weight_diff > 0.15
+            
+            if is_scaling:
+                # Cambio fisico: HAProxy se reinicia y Docker levanta/baja contenedores.
+                time.sleep(3.0) 
+            elif is_shifting_traffic:
+                # Cambio logico: HAProxy redirige tráfico, necesitamos que la latencia y CPU se actualicen.
+                time.sleep(1.5)
+            else:
+                # Estado de reposo: El agente no hizo nada. Solo leemos el siguiente tick de CPU.
+                time.sleep(0.4) 
+                
             self.actual_state = self.get_real_metrics()
+            
+            # Guardamos los pesos actuales para compararlos en el proximo step
+            self.last_weights = np.copy(raw_weights)
         else:
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
@@ -143,7 +169,11 @@ class LoadBalancerEnv(gym.Env):
 
         # Inicializamos las variables de estado la primera vez
         if not hasattr(self, 'sim_traffic_fn') or (self.current_step - self.sim_fn_start_step >= self.sim_fn_duration):
-            # Decidimos los tiempos limites y funciones a usar
+            # Decidimos los tiempos limites y funciones a usar 
+            # 0: Double Wave
+            # 1: Lineal
+            # 2: Exponencial
+            # 3: Steps
             self.sim_traffic_fn = np.random.randint(0, 4)
             self.sim_fn_start_step = self.current_step
             self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
@@ -151,67 +181,109 @@ class LoadBalancerEnv(gym.Env):
             self.sim_total_users = 450 
             
             # Se generan los valores necesarios para cada funcion
-            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            # Double wave
+            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.2, 0.95)
             self.sim_min = self.sim_total_users * np.random.uniform(0.05, 0.20)
-            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.2, 0.95)
+            self.sim_shift_peak_one = np.random.uniform(0.1 , 0.4)
+            self.sim_shift_peak_two = np.random.uniform(0.6 , 0.9)
+            self.sim_width_peak_one = np.random.uniform(0.05, 0.2)
+            self.sim_width_peak_two = np.random.uniform(0.05, 0.2)
+            # Exponencial
             self.sim_base = self.sim_total_users * np.random.uniform(0.02, 0.15)
-            self.sim_scale_rate = (self.sim_total_users - self.sim_base) / (self.sim_fn_duration / 2)
+            # Lineal
+            self.sim_scale_rate = np.random.randint(1, 10)
+            self.sim_agresiveness_coeficient = np.random.uniform(0.7, 1.5) # de-formacion de las funciones para que no sean tan perfectas
+            # Step
+            self.sim_step_count= np.random.randint(3, 20)
 
         relative_step = self.current_step - self.sim_fn_start_step
         mid_step = self.sim_fn_duration / 2
         workload = 10.0 # Valor por defecto
 
-        # 0: Double Wave
+        # Double Wave
         if self.sim_traffic_fn == 0:
-            import math
+            # e**(−(t−u/o​)**2)
+            # t -> relative_time
+            # u(centro) -> time_limit * shift_peak
+            # o(ancho) -> width
             workload = (
-                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 5) ** 2)
-                + (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step / (self.sim_fn_duration / 10 * 2 / 3)) - 10) ** 2)
+                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_one) / 
+                                                                  (self.sim_fn_duration * self.sim_width_peak_one)) ** 2)
+                +
+                (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_two) / 
+                                                                  (self.sim_fn_duration * self.sim_width_peak_two)) ** 2)
                 + self.sim_min
             )
             
-        # 1: Lineal
+        # Lineal
         elif self.sim_traffic_fn == 1:
             if relative_step <= mid_step:
-                workload = self.sim_base + (self.sim_scale_rate * relative_step)
+                 # Subida 
+                workload = self.sim_base + (self.sim_scale_rate * relative_step * self.sim_agresiveness_coeficient)
             else:
-                peak = self.sim_base + (self.sim_scale_rate * mid_step)
+                # Bajada
+                peak = self.sim_base + (self.sim_scale_rate * mid_step * self.sim_agresiveness_coeficient)
                 time_down = relative_step - mid_step
-                workload = peak - (self.sim_scale_rate * time_down)
+                workload = peak - (self.sim_scale_rate * time_down * self.sim_agresiveness_coeficient)
 
-        # 2: Exponencial
+        # Exponencial
         elif self.sim_traffic_fn == 2:
-            import math
             peak_time = self.sim_fn_duration * 0.7
             base_users = max(10, self.sim_base)
             if relative_step <= peak_time:
-                k = math.log(self.sim_total_users / base_users) / max(1, peak_time)
-                workload = base_users * math.exp(k * relative_step)
+                 # Subida 
+                k = math.log(self.sim_total_users / base_users) / max(1, peak_time) * self.sim_agresiveness_coeficient
+                try: 
+                    workload = base_users * math.exp(k * relative_step)
+                except OverflowError:
+                    workload = self.sim_total_users
             else:
+                # Bajada
                 time_down = relative_step - peak_time
-                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time)
+                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time) * self.sim_agresiveness_coeficient
                 workload = self.sim_total_users - (drop_rate * time_down)
 
-        # 3: Step (Escalones)
+        # Steps 
         elif self.sim_traffic_fn == 3:
-            step_size = max(5, self.sim_fn_duration // 10)
-            users_per_step = (self.sim_total_users - self.sim_base) / 5
+
+            # Calculamos dinamicamente el tamaño de los escalones
+            step_size = self.sim_fn_duration // self.sim_step_count # Ancho steps
+            users_per_step = (self.sim_total_users - self.sim_base) / (self.sim_step_count / 2) # Altura steps
+
             if relative_step <= mid_step:
+                 # Subida 
                 current_step_idx = relative_step // step_size
                 workload = self.sim_base + (users_per_step * current_step_idx)
+
             else:
+                # Bajada
                 peak_steps = mid_step // step_size
                 peak_users = self.sim_base + (users_per_step * peak_steps)
                 steps_down = (relative_step - mid_step) // step_size
                 workload = peak_users - (users_per_step * steps_down)
 
+        workload = max(10.0, workload)
+
+        # Ruido (Jitter)
+        # vibracion del 5%
+        standar_deviation = workload * 0.05
+        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
+        workload += jitter
+
+        # Outlier (Evento Extremo)
+        # generacion random de probabilidad 2% para extremos
+        prob = np.random.randint(1, 101)
+        if prob <= 2:
+            workload = self.sim_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
+        elif prob >= 99:
+            workload = self.sim_total_users # simulamos un pico (ddos, viral, etc)
+
+
+
         return max(10, min(workload, self.sim_total_users))
 
     def get_simulated_metrics(self, action):
-        """
-        TODO: modelo matemático que simula la CPU y Latencia 
-        """
-
         total_workload = self.get_dynamic_simulated_workload()
         
         new_state = np.zeros(self.n_max * 6, dtype=np.float32)
@@ -231,22 +303,71 @@ class LoadBalancerEnv(gym.Env):
         for i in range(self.n_max):
             idx = i * 6
             if self.sim_active_containers[i]:
-                # Capacidad del nodo 50 'unidades' de trabajo
+                # M/M/1 -----------------------------------------------------------------------------------------
+                
+                # Params Base
+                max_capacity = 50.0  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                base_latency_ms = 15.0 # S: Tiempo de servicio base sin hacer cola
+                
+                # Tasa de llegada (lambda)
                 node_load = total_workload * norm_weights[i]
-                cpu_usage = min(1.0, node_load / 50.0) 
                 
-               
-                latency_ms = 10 + (cpu_usage ** 4) * 500 
+                # Utilización del Sistema (rho = lambda / mu)
+                rho = node_load / max_capacity 
                 
-                errors = max(0.0, (cpu_usage - 0.9) * 10) if cpu_usage > 0.9 else 0.0
+                # CALCULO DE CPU ------------------------------------------------
+                # Se añade ruido gaussiano 
+                cpu_noise = np.random.normal(0, 0.02)
+                cpu_usage = max(0.0, min(1.0, rho + cpu_noise))
+                
+                # CALCULO DE LATENCIA ----------------------------------------------
+                # Basado en el teorema M/M/1: Tiempo de Respuesta E[T] = S / (1 - rho)
+                if rho < 0.95:
+                    # la cola crece exponencialmente al acercarse al 100%
+                    latency_ms = base_latency_ms / (1.0 - rho)
+                else:
+                    # Si el sistema está saturado (rho >= 0.95), la cola "explota" y se degrada fuertemente.
+                    latency_ms = base_latency_ms * 20.0 + (rho - 0.95) * 5000.0
+                
+                # Jitter de red (ruido en la latencia)
+                latency_ms += abs(np.random.normal(0, latency_ms * 0.05))
+                
+                # CALCULO DE ERRORES ---------------------------------------------
+                # Simulamos un desbordamiento de bufer (Queue overflow). 
+                # Usamos una función sigmoide para que la tasa de errores pase de 0% a 100% de forma suave 
+                # pero rápida cuando la capacidad supera el 100% (rho > 1.0)
+                if rho < 0.9:
+                    errors = 0.0
+                else:
+                    # 1 / (1 + e^(-k*(x-x0)))
+                    errors = 1.0 / (1.0 + math.exp(-15.0 * (rho - 1.05)))
+
+
+                # CALCULO DE RAM (Ley de Little) --------------------------------
+                # L: El num de peticiones concurrentes dentro del contenedor (procesandose + en cola)
+                if rho < 0.95:
+                    L_concurrent = rho / (1.0 - rho)
+                else:
+                    # Si el sistema colapsa, la acumulación de peticiones en la RAM se dispara
+                    L_concurrent = (0.95 / 0.05) + (rho - 0.95) * 200.0
+                
+                # Definimos la huella de memoria
+                base_ram_footprint = 0.15 # 15% de RAM ocupada solo por tener el contenedor encendido (Python/Flask)
+                ram_per_request = 0.015   # Cada petición viva en el sistema consume un 1.5% adicional de RAM
+                
+                ram_usage = base_ram_footprint + (L_concurrent * ram_per_request)
+                
+                # Ruido simulando el Garbage Collector de Python (liberando y ocupando memoria)
+                ram_noise = np.random.normal(0, 0.02)
+                ram_usage = min(1.0, max(0.0, ram_usage + ram_noise))
                 
                 new_state[idx:idx+6] = [
-                    cpu_usage,       # cpu_usg
-                    0.3,             # ram_usg_pct
-                    1.0,             # ram_total_normalize
-                    min(1.0, latency_ms / 2000.0), # latency normalizada a 2000ms
-                    errors,          # error_rate
-                    1.0              # status (ACTIVO)
+                    min(1.0, max(0.0, cpu_usage)),             # cpu_usg
+                    ram_usage,                                 # ram_usg_pct 
+                    1.0,                                       # ram_total_normalize
+                    min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
+                    min(1.0, max(0.0, errors)),                # error_rate
+                    1.0                                        # status (ACTIVO)
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
@@ -257,21 +378,24 @@ class LoadBalancerEnv(gym.Env):
 
         total_reward = 0.0
 
-        # Pesos re-ajustados 
         W_LATENCY = 2.0      
         W_ERRORS = 50.0      
         W_COST = 1.0         
         W_SATURATION = 1.0   
+        W_RAM_SATURATION = 1.0 
         
         if cant_active_containers == 0:
             return -200.0 
             
+        # Variables para acumular
         avg_latency = 0.0
-        total_errors = 0.0
+        avg_errors = 0.0
+        avg_cpu_sat = 0.0
+        avg_ram_sat = 0.0
         
         for i in range(self.n_max):
             idx_base = i * 6 
-            status = state[idx_base + 5] #
+            status = state[idx_base + 5] 
             
             if status == 1.0:
                 cpu_pct = state[idx_base]
@@ -280,24 +404,30 @@ class LoadBalancerEnv(gym.Env):
                 errores = state[idx_base + 4]
 
                 avg_latency += latency
-                total_errors += errores
+                avg_errors += errores
                 
                 if cpu_pct > 0.80:
-                    total_reward -= W_SATURATION * (cpu_pct - 0.80)
+                    avg_cpu_sat += (cpu_pct - 0.80)
+                if ram_pct > 0.85:
+                    avg_ram_sat += (ram_pct - 0.85)
                     
+        # PROMEDIAMOS las métricas de los nodos encendidos
         avg_latency /= cant_active_containers
+        avg_errors /= cant_active_containers
+        avg_cpu_sat /= cant_active_containers
+        avg_ram_sat /= cant_active_containers
         
-        # Calculo penalizaciones
-        latency_penalty = W_LATENCY * (avg_latency ** 2) # Penalizacion exponencial
-        error_penalty = W_ERRORS * total_errors
+        # Calculo de penalizaciones (ahora usando los promedios reales)
+        latency_penalty = W_LATENCY * (avg_latency ** 2) 
+        error_penalty = W_ERRORS * avg_errors 
         cost_penalty = W_COST * (cant_active_containers / self.n_max)
+        saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
         
-        total_reward -= (latency_penalty + error_penalty + cost_penalty)
+        total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty)
 
         # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
         if scale_decision <= 0.3 or scale_decision >= 0.7:
-            # Pequeña penalidad por ejecutar la acción de escalar
             total_reward -= 0.05 
         
         return total_reward
