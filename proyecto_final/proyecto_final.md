@@ -169,16 +169,44 @@ para representar la variabilidad natural del sistema
 
 Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
-**Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada 
-contenedor respecto al límite configurado, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM), normalizado en $[0, 1]$.
+**Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada contenedor respecto al límite configurado, normalizado en $[0, 1]$.
 
 $$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
 
-**Latencia (latency):**  Representa el tiempo de respuesta promedio de las peticiones HTTP procesadas por cada contenedor. En el entorno real, esta métrica se extrae directamente de _HAProxy_. Para garantizar la consistencia con el modelo simulado (M/M/1), la latencia se normaliza dividiendo el valor observado por un límite máximo de timeout de 2000ms, su calculo esta basado en la formula presentada en el _Modelado Experimental_. 
+Donde:
+- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
+- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor 
+$(1024 \times 1024 \times 1024 \text{ bytes})$
 
-- **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado.
+En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. 
+En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco 
+Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima 
+el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican 
+riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para 
+evitar la caída del servicio.
 
-- **Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
+**Latencia (latency):**  Representa el tiempo de respuesta promedio de las 
+peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout 
+máximo de 2000 ms.
+
+$$\text{latency} = \frac{t_{\text{respuesta}}}{t_{\text{timeout}}}$$
+
+Donde:
+- $t_{\text{respuesta}}$ = tiempo de respuesta observado (ms)
+- $t_{\text{timeout}}$ = límite máximo configurado de 2000 ms
+
+En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de 
+las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de 
+colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado 
+en $[0, 1]$.
+
+**Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado. En el entorno real, se extrae directamente de las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de saturación descrito en el Marco Teórico, permaneciendo en $0$ para valores de utilización $\rho < 0.9$ y creciendo hacia $1$ a medida que el nodo supera su capacidad. Se encuentra normalizado en $[0, 1]$.
+
+**Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
+
+$$\text{status}_i = \begin{cases} 1 & \text{si el contenedor recibe tráfico} \\ 0 & \text{si el contenedor está inactivo} \end{cases}$$
+
+En el entorno real, el valor se determina a partir del peso asignado por _HAProxy_, un contenedor con peso mayor a $0$ es considerado activo, mientras que un peso igual a $0$ lo marca como inactivo. En el entorno simulado, un contenedor es activo o inactivo sin estados intermedios, omitiendo el caso real en que HAProxy puede mantener un contenedor encendido pero sin asignarle tráfico.
 
 ## Herramientas Utilizadas
 
