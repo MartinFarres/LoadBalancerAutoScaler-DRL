@@ -159,16 +159,22 @@ Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO
 
 **Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo. 
 
-$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}}$$
+$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
  Donde:
 - $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
 - $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
+- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado 
+para representar la variabilidad natural del sistema
+
 
 Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
-- **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representan el consumo porcentual y absoluto de memoria RAM, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM).
+**Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada 
+contenedor respecto al límite configurado, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM), normalizado en $[0, 1]$.
 
-- **Latencia (latency):** Tiempo de respuesta de las peticiones, métrica crítica para la experiencia de usuario.
+$$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
+
+**Latencia (latency):**  Representa el tiempo de respuesta promedio de las peticiones HTTP procesadas por cada contenedor. En el entorno real, esta métrica se extrae directamente de _HAProxy_. Para garantizar la consistencia con el modelo simulado (M/M/1), la latencia se normaliza dividiendo el valor observado por un límite máximo de timeout de 2000ms, su calculo esta basado en la formula presentada en el _Modelado Experimental_. 
 
 - **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado.
 
