@@ -157,7 +157,14 @@ Evitar incluir en esta sección código fuente. Este se puede incluir como un ap
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
-- **Uso de la CPU (cpu_usg):** Uso de CPU por contenedor, normalizado para identificar la carga computacional.
+**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo. 
+
+$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}}$$
+ Donde:
+- $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
+- $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
+
+Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
 - **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representan el consumo porcentual y absoluto de memoria RAM, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM).
 
