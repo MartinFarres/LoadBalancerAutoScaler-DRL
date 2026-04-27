@@ -35,14 +35,17 @@ def train_phase_1_simulation(nodes=5, iterations=50000, file="training_metrics.c
     
     env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
     
+    device = 'cuda' if __import__('torch').cuda.is_available() else 'cpu'
+    
     model = PPO("MlpPolicy", 
                 env_sim, 
                 verbose=1, 
                 n_steps=512,                  
                 batch_size=128,               
-                learning_rate=0.001, # Fijo para la simulación
+                learning_rate=0.001,
                 ent_coef=0.01,                
-                tensorboard_log=directory_logs)
+                tensorboard_log=directory_logs,
+                device=device)
 
     metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1", file_name=file)
 
@@ -65,7 +68,9 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
         print("No se encontró el modelo base simulado.")
         return
 
-    model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
     model.learning_rate = 0.0001
