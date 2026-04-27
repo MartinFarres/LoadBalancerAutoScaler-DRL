@@ -3,6 +3,8 @@ from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import os
 
 def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     
@@ -12,7 +14,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     
     print("Loading trained agent...")
     
-    model = PPO.load("ppo_lb_simulated_base")
+    model = PPO.load("ppo_lb_production_ready")
     
     obs, info = env.reset()
     
@@ -60,8 +62,6 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     
     
     # Guardar a CSV
-    import pandas as pd
-    import os
     formatted_file = f"test_ppo_n{nodes}_i{iterations}_{file}"
     save_path = os.path.join("./training_results/phase2", formatted_file) # or somewhere else for test
     os.makedirs("./training_results/testing_results", exist_ok=True)

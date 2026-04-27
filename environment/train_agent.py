@@ -5,6 +5,7 @@ from environment import LoadBalancerEnv
 from callbacks import TrainingMetricsCallback
 from visualizer import Visualizer
 import sys
+import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 
@@ -28,14 +29,14 @@ class StepLoggerCallback(BaseCallback):
 
 
 directory_logs = "./logs_tensorboard/"
-MODEL_PATH = "./logs_checkpoints/ppo_real_env_2000_steps"
+MODEL_PATH = "ppo_lb_simulated_base"
 
 def train_phase_1_simulation(nodes=5, iterations=50000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento en Simulacion Pura para {iterations} pasos con {nodes} nodos...")
     
     env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
     
-    device = 'cuda' if __import__('torch').cuda.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     model = PPO("MlpPolicy", 
                 env_sim, 

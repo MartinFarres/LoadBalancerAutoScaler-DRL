@@ -130,7 +130,7 @@ def test_pid(processes, args):
     down_processes(processes)
 
 
-def init_processes():
+def init_processes(nodes):
     processes = []
 
     print(" Iniciando Entorno Real... ")
@@ -148,7 +148,7 @@ def init_processes():
 
     try:
         # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
-        res = requests.post("http://127.0.0.1:8000/init", timeout=60)
+        res = requests.post(f"http://127.0.0.1:8000/init?n_max={nodes}", timeout=60)        
         if res.status_code == 200:
             print("  Cluster inicializado con éxito.")
         else:
@@ -197,7 +197,6 @@ def down_processes(processes):
         
     print("Terminado.")
 
-
 if __name__ == "__main__":
     args = parse_args()
     comando = args.pipeline
@@ -205,24 +204,24 @@ if __name__ == "__main__":
     if comando == "simulado":
         simulated_training(args)
     elif comando == "real":
-        real_training(init_processes(), args)
+        real_training(init_processes(args.nodes), args) 
     elif comando == "test_ppo":
-        test_agent(init_processes(), args)
+        test_agent(init_processes(args.nodes), args) 
     elif comando == "test_baseline":
-        test_baseline(init_processes(), args)
+        test_baseline(init_processes(args.nodes), args) 
     elif comando == "test_pid":
-        test_pid(init_processes(), args)
+        test_pid(init_processes(args.nodes), args) 
     elif comando == "all":
         print("Iniciando pipeline completo (Simulación -> Real -> Testing Múltiple)...")
         simulated_training(args)
-        real_training(init_processes(), args)
+        real_training(init_processes(args.nodes), args) 
         
         print("\n\n" + "="*50)
         print("INICIANDO BATERÍA DE PRUEBAS COMPARATIVAS")
         print("="*50)
         
-        test_baseline(init_processes(), args)
-        test_pid(init_processes(), args)
-        test_agent(init_processes(), args)
+        test_baseline(init_processes(args.nodes), args) 
+        test_pid(init_processes(args.nodes), args) 
+        test_agent(init_processes(args.nodes), args) 
     else:
         print(f"Comando desconocido: {comando}")
