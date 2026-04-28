@@ -157,15 +157,56 @@ Evitar incluir en esta sección código fuente. Este se puede incluir como un ap
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
-- **Uso de la CPU (cpu_usg):** Uso de CPU por contenedor, normalizado para identificar la carga computacional.
+**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo. 
 
-- **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representan el consumo porcentual y absoluto de memoria RAM, permitiendo al agente distinguir entre picos momentáneos y riesgo de saturación (OOM).
+$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
+ Donde:
+- $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
+- $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
+- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado 
+para representar la variabilidad natural del sistema
 
-- **Latencia (latency):** Tiempo de respuesta de las peticiones, métrica crítica para la experiencia de usuario.
 
-- **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado.
+Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
-- **Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
+**Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada contenedor respecto al límite configurado, normalizado en $[0, 1]$.
+
+$$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
+
+Donde:
+- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
+- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor 
+$(1024 \times 1024 \times 1024 \text{ bytes})$
+
+En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. 
+En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco 
+Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima 
+el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican 
+riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para 
+evitar la caída del servicio.
+
+**Latencia (latency):**  Representa el tiempo de respuesta promedio de las 
+peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout 
+máximo de 2000 ms.
+
+$$\text{latency} = \frac{t_{\text{respuesta}}}{t_{\text{timeout}}}$$
+
+Donde:
+- $t_{\text{respuesta}}$ = tiempo de respuesta observado (ms)
+- $t_{\text{timeout}}$ = límite máximo configurado de 2000 ms
+
+En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de 
+las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de 
+colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado 
+en $[0, 1]$.
+
+**Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado. En el entorno real, se extrae directamente de las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de saturación descrito en el Marco Teórico, permaneciendo en $0$ para valores de utilización $\rho < 0.9$ y creciendo hacia $1$ a medida que el nodo supera su capacidad. Se encuentra normalizado en $[0, 1]$.
+
+**Estado (status):** Indicador binario o categórico de la disponibilidad del servicio.
+
+$$\text{status}_i = \begin{cases} 1 & \text{si el contenedor recibe tráfico} \\ 0 & \text{si el contenedor está inactivo} \end{cases}$$
+
+En el entorno real, el valor se determina a partir del peso asignado por _HAProxy_, un contenedor con peso mayor a $0$ es considerado activo, mientras que un peso igual a $0$ lo marca como inactivo. En el entorno simulado, un contenedor es activo o inactivo sin estados intermedios, omitiendo el caso real en que HAProxy puede mantener un contenedor encendido pero sin asignarle tráfico.
 
 ## Herramientas Utilizadas
 

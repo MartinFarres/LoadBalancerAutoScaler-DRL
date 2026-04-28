@@ -7,15 +7,24 @@ class TrainingMetricsCallback(BaseCallback):
     """
     Callback personalizado para guardar el historial de entrenamiento de PPO en un archivo CSV.
     """
-    def __init__(self, save_dir: str = "./training_results", verbose: int = 0):
+    def __init__(self, save_dir: str = "./training_results", file_name: str = "training_metrics.csv", verbose: int = 0):
         super().__init__(verbose)
         self.save_dir = save_dir
-        self.csv_path = os.path.join(save_dir, "training_metrics.csv")
+        self.csv_path = os.path.join(save_dir, file_name)
         os.makedirs(save_dir, exist_ok=True)
         
-        # Historial de métricas
-        self.rollout_history = {'timestep': [], 'rollout/ep_rew_mean': [], 'rollout/ep_len_mean': []}
+        self.rollout_history = {
+            'timestep': [], 
+            'rollout/ep_rew_mean': [], 
+            'rollout/ep_len_mean': [],
+            'rollout/cpu_mean': [],       
+            'rollout/ram_mean': [],
+            'rollout/latency_mean': [],
+            'rollout/error_mean': []
+        }
         self.train_history = {'train/policy_loss': [], 'train/value_loss': []}
+        
+        self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': []}
         
         self._init_csv()
     
@@ -43,41 +52,50 @@ class TrainingMetricsCallback(BaseCallback):
             if hasattr(self.model, 'logger') and self.model.logger is not None:
                 if key in self.model.logger.name_to_value:
                     return float(self.model.logger.name_to_value[key])
-        except Exception as e: 
-            print(f"Error leyendo métrica {key} del logger: {e}")
-            pass
-            
+        except Exception: pass
         return default
 
     def _get_ep_info(self, key: str, default: float = 0.0):
-        """
-        Lee directamente del búfer de memoria interna del Monitor de SB3.
-        Esto esquiva los problemas de sincronización del logger.
-        """
         try:
             if hasattr(self.model, 'ep_info_buffer') and self.model.ep_info_buffer:
                 if key == 'rollout/ep_rew_mean':
-                    # 'r' es la llave interna que usa SB3 para el Reward (Recompensa)
                     return float(np.mean([ep_info['r'] for ep_info in self.model.ep_info_buffer]))
                 elif key == 'rollout/ep_len_mean':
-                    # 'l' es la llave interna que usa SB3 para la Longitud (Length)
                     return float(np.mean([ep_info['l'] for ep_info in self.model.ep_info_buffer]))
-        except Exception as e:
-            print(f"Error leyendo {key} del buffer: {e}")
-            pass
+        except Exception: pass
         return default
     
     def _on_step(self):
+        # Capturamos las métricas del diccionario 'info' del entorno
+        for info in self.locals.get("infos", []):
+            if "cpu_avg" in info:
+                self.step_metrics_buffer['cpu'].append(info['cpu_avg'])
+                self.step_metrics_buffer['ram'].append(info['ram_avg'])
+                self.step_metrics_buffer['latency'].append(info['latency_avg'])
+                self.step_metrics_buffer['errors'].append(info['error_avg'])
         return True
     
     def _on_rollout_end(self):
         try:
-            # Ahora usamos la lectura directa de memoria para recompensa y longitud
+            # Métricas estándar
             self.rollout_history['rollout/ep_rew_mean'].append(self._get_ep_info('rollout/ep_rew_mean'))
             self.rollout_history['rollout/ep_len_mean'].append(self._get_ep_info('rollout/ep_len_mean'))
             self.rollout_history['timestep'].append(self.model.num_timesteps)
             
-            # Las métricas de pérdida de la red sí se pueden leer del logger normal
+            # Promediamos y guardamos las métricas de hardware del último rollout
+            self.rollout_history['rollout/cpu_mean'].append(
+                np.mean(self.step_metrics_buffer['cpu']) if self.step_metrics_buffer['cpu'] else 0.0)
+            self.rollout_history['rollout/ram_mean'].append(
+                np.mean(self.step_metrics_buffer['ram']) if self.step_metrics_buffer['ram'] else 0.0)
+            self.rollout_history['rollout/latency_mean'].append(
+                np.mean(self.step_metrics_buffer['latency']) if self.step_metrics_buffer['latency'] else 0.0)
+            self.rollout_history['rollout/error_mean'].append(
+                np.mean(self.step_metrics_buffer['errors']) if self.step_metrics_buffer['errors'] else 0.0)
+            
+            # Limpiamos el buffer para el próximo ciclo
+            self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': []}
+            
+            # Métricas de pérdida
             self.train_history['train/policy_loss'].append(self._get_logger_value('train/policy_gradient_loss'))
             self.train_history['train/value_loss'].append(self._get_logger_value('train/value_loss'))
             

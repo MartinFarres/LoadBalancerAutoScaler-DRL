@@ -34,8 +34,8 @@ class StressGenerator(LoadTestShape):
         function_number --> index for function to run
         time_limit --> total length for a unique test in ms
     """
-    total_users = 40000 
-    spawn_rate = 250 # Cuidado, aumentar puede colapsar el cpu
+    total_users = 4000 
+    spawn_rate = 40 # Cuidado, aumentar puede colapsar el cpu
     running_fn = False
     function_tick_start = 0
 

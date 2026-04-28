@@ -10,3 +10,4 @@ locust
 Flask
 gunicorn
 uvicorn[standard]
+argparse

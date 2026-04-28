@@ -123,8 +123,32 @@ class LoadBalancerEnv(gym.Env):
         
         terminated = (cant_active_containers == 0)
         truncated = (self.current_step >= self.max_steps)
+
+        # Sacarmos promedio de info de nodos
+        cpu_t = ram_t = lat_t = err_t = 0.0
+        if cant_active_containers > 0:
+            for i in range(self.n_max):
+                idx = i * 6
+                if self.actual_state[idx + 5] == 1.0: # Si está ACTIVO
+                    cpu_t += self.actual_state[idx]
+                    ram_t += self.actual_state[idx+1]
+                    lat_t += self.actual_state[idx+3]
+                    err_t += self.actual_state[idx+4]
+                    
+            cpu_t /= cant_active_containers
+            ram_t /= cant_active_containers
+            lat_t /= cant_active_containers
+            err_t /= cant_active_containers
         
-        info = {"activos": cant_active_containers, "step": self.current_step}
+
+        info = {
+            "activos": cant_active_containers, 
+            "step": self.current_step,
+            "cpu_avg": float(cpu_t),
+            "ram_avg": float(ram_t),
+            "latency_avg": float(lat_t),
+            "error_avg": float(err_t)
+        }
         
         return self.actual_state, reward, terminated, truncated, info
 

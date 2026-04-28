@@ -2,13 +2,34 @@ import subprocess
 import time
 import requests
 import sys
+import argparse
 
-def simulated_training():
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Load Balancer AutoScaler DRL run script')
+    parser.add_argument('-p', '--pipeline', type=str, choices=['real', 'simulado', 'test_ppo', 'test_baseline', 'test_pid', 'all', 'sweep'], default='all', help='Pipeline to run')
+    parser.add_argument('-n', '--nodes', type=int, default=5, help='Amount of nodes to run the training')
+    parser.add_argument('-f', '--file', type=str, default='training_metrics.csv', help='Name of the CSV file to save metrics (will append timestamp to avoid overwrites)')
+    parser.add_argument('-si', '--simulated_iterations', type=int, default=50000, help='Simulated training iterations')
+    parser.add_argument('-ri', '--real_iterations', type=int, default=5000, help='Real training iterations')
+    parser.add_argument('-ti', '--testing_iterations', type=int, default=1000, help='Testing iterations')
+    parser.add_argument('-pi', '--pid_iterations', type=int, default=1000, help='PID baseline iterations')
+    parser.add_argument('-ai', '--agent_iterations', type=int, default=1000, help='Agent baseline iterations')
+    
+    return parser.parse_args()
+
+def simulated_training(args):
     processes = []
 
     print("[1/1] Iniciando Entrenamiento Simulado... ")
 
-    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_1_simulation"])
+    cmd = [
+        sys.executable, "environment/train_agent.py", "train_phase_1_simulation",
+        "--nodes", str(args.nodes),
+        "--file", args.file,
+        "--iterations", str(args.simulated_iterations)
+    ]
+    train_process = subprocess.Popen(cmd)
     processes.append(("PPO Training Simulated", train_process))
 
     try:
@@ -18,15 +39,22 @@ def simulated_training():
         print("\n\n Entrenamiento interrumpido por el usuario (Ctrl+C).")
         sys.exit(0) # Salida limpia
     finally:
-        down_processes(processes)
+        pass
+        # down_processes(processes)
 
 
-def real_training(processes):
+def real_training(processes, args):
     print("[1/1] Iniciando Entrenamiento Real... ")
     print("-" * 50)
     time.sleep(2)
     
-    train_process = subprocess.Popen([sys.executable, "environment/train_agent.py", "train_phase_2_real_world"])
+    cmd = [
+        sys.executable, "environment/train_agent.py", "train_phase_2_real_world",
+        "--nodes", str(args.nodes),
+        "--file", args.file,
+        "--iterations", str(args.real_iterations)
+    ]
+    train_process = subprocess.Popen(cmd)
     processes.append(("PPO Training", train_process))
 
     try:
@@ -37,12 +65,18 @@ def real_training(processes):
     down_processes(processes)
 
 
-def test_agent(processes):
+def test_agent(processes, args):
     print("[1/1] Iniciando Testing Agente PPO...")
     print("-" * 50)
     time.sleep(2)
    
-    test_process = subprocess.Popen([sys.executable, "environment/test_agent.py"])
+    cmd = [
+        sys.executable, "environment/test_agent.py",
+        "--nodes", str(args.nodes),
+        "--file", args.file,
+        "--iterations", str(args.testing_iterations)
+    ]
+    test_process = subprocess.Popen(cmd)
     processes.append(("PPO Testing", test_process))
 
     try:
@@ -53,12 +87,18 @@ def test_agent(processes):
     down_processes(processes)
 
 
-def test_baseline(processes):
+def test_baseline(processes, args):
     print("[1/1] Iniciando Testing Baseline (Umbrales Clásicos y Round Robin)...")
     print("-" * 50)
     time.sleep(2)
    
-    test_process = subprocess.Popen(["python", "environment/baseline_agent.py"])
+    cmd = [
+        sys.executable, "environment/baseline_agent.py",
+        "--nodes", str(args.nodes),
+        "--file", args.file,
+        "--iterations", str(args.agent_iterations)
+    ]
+    test_process = subprocess.Popen(cmd)
     processes.append(("Baseline Industry Testing", test_process))
 
     try:
@@ -69,12 +109,18 @@ def test_baseline(processes):
     down_processes(processes)
 
 
-def test_pid(processes):
+def test_pid(processes, args):
     print("[1/1] Iniciando Testing Baseline (Controlador PID)...")
     print("-" * 50)
     time.sleep(2)
    
-    test_process = subprocess.Popen(["python", "environment/baseline_pid.py"])
+    cmd = [
+        sys.executable, "environment/baseline_PID.py",
+        "--nodes", str(args.nodes),
+        "--file", args.file,
+        "--iterations", str(args.pid_iterations)
+    ]
+    test_process = subprocess.Popen(cmd)
     processes.append(("Baseline PID Testing", test_process))
 
     try:
@@ -84,8 +130,23 @@ def test_pid(processes):
     
     down_processes(processes)
 
+def wandb_sweep(args):
+    print("[1/1] Lanzando proceso de W&B Sweep... ")
+    
+    cmd = [
+        sys.executable, "environment/train_agent.py", "sweep",
+        "--nodes", str(args.nodes),
+        "--iterations", "200000" # Iteraciones recomendadas para el sweep
+    ]
+    sweep_process = subprocess.Popen(cmd)
 
-def init_processes():
+    try:
+        sweep_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Sweep interrumpido por el usuario (Ctrl+C).")
+
+
+def init_processes(nodes):
     processes = []
 
     print(" Iniciando Entorno Real... ")
@@ -103,7 +164,7 @@ def init_processes():
 
     try:
         # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
-        res = requests.post("http://127.0.0.1:8000/init", timeout=60)
+        res = requests.post(f"http://127.0.0.1:8000/init?n_max={nodes}", timeout=60)        
         if res.status_code == 200:
             print("  Cluster inicializado con éxito.")
         else:
@@ -152,32 +213,33 @@ def down_processes(processes):
         
     print("Terminado.")
 
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        comando = sys.argv[1]
-        
-        if comando == "simulado":
-            simulated_training()
-        elif comando == "real":
-            real_training(init_processes())
-        elif comando == "test_ppo":
-            test_agent(init_processes())
-        elif comando == "test_baseline":
-            test_baseline(init_processes())
-        elif comando == "test_pid":
-            test_pid(init_processes())
-        else:
-            print(f"Comando desconocido: {comando}")
-    else:
+    args = parse_args()
+    comando = args.pipeline
+
+    if comando == "simulado":
+        simulated_training(args)
+    elif comando == "real":
+        real_training(init_processes(args.nodes), args) 
+    elif comando == "test_ppo":
+        test_agent(init_processes(args.nodes), args) 
+    elif comando == "test_baseline":
+        test_baseline(init_processes(args.nodes), args) 
+    elif comando == "test_pid":
+        test_pid(init_processes(args.nodes), args) 
+    elif comando == "all":
         print("Iniciando pipeline completo (Simulación -> Real -> Testing Múltiple)...")
-        simulated_training()
-        real_training(init_processes())
+        simulated_training(args)
+        real_training(init_processes(args.nodes), args) 
         
         print("\n\n" + "="*50)
         print("INICIANDO BATERÍA DE PRUEBAS COMPARATIVAS")
         print("="*50)
         
-        test_baseline(init_processes())
-        test_pid(init_processes())
-        test_agent(init_processes())
+        test_baseline(init_processes(args.nodes), args) 
+        test_pid(init_processes(args.nodes), args) 
+        test_agent(init_processes(args.nodes), args) 
+    elif comando == "sweep":
+        wandb_sweep(args)
+    else:
+        print(f"Comando desconocido: {comando}")

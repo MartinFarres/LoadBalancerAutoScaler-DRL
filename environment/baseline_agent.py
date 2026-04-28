@@ -3,10 +3,10 @@ from visualizer import Visualizer
 import numpy as np
 import time
 
-def run_industry_baseline(simulated=True, steps=5000):
+def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.csv'):
     print("Iniciando prueba del Baseline de la Industria (Round Robin + Thresholds)...")
     
-    env = LoadBalancerEnv(simulated=simulated, max_steps=steps)
+    env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max)
     obs, info = env.reset()
     
     # Auto Scaler Tradicional
@@ -73,5 +73,13 @@ def run_industry_baseline(simulated=True, steps=5000):
         high_latency_threshold=0.8 
     )
 
+
 if __name__ == "__main__":
-    run_industry_baseline(simulated=True)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--nodes', type=int, default=5)
+    parser.add_argument('--file', type=str, default='testing_metrics.csv')
+    parser.add_argument('--iterations', type=int, default=5000)
+    args = parser.parse_args()
+
+    run_industry_baseline(simulated=True, steps=args.iterations, n_max=args.nodes, file=args.file)
