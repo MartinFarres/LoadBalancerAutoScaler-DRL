@@ -9,6 +9,8 @@ from typing import Callable
 import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+import wandb
+from wandb.integration.sb3 import WandbCallback
 
 class StepLoggerCallback(BaseCallback):
     """
@@ -103,6 +105,77 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     viz = Visualizer(save_dir="./resultados_graficos/phase2")
     viz.plot_learning_curve(f"./training_results/phase2/{file}")
 
+def run_wandb_sweep(nodes=5, iterations=100000):
+    print("Iniciando W&B Sweep para optimización de hiperparámetros...")
+    
+    sweep_config = {
+        'method': 'bayes', # Optimizacion Bayesiana (encuentra el óptimo más rápido que Grid o Random)
+        'metric': {
+            'name': 'rollout/ep_rew_mean', # Métrica a optimizar
+            'goal': 'maximize'   
+        },
+        'parameters': {
+            
+            'learning_rate': {'distribution': 'log_uniform_values', 'min': 1e-5, 'max': 3e-3},
+            'gamma': {'min': 0.85, 'max': 0.999},
+
+            # Mem y Lotes
+            'n_steps': {'values': [128, 256, 512, 1024, 2048]},
+            'batch_size': {'values': [64, 128, 256]},
+            'n_epochs': {'values': [3,6,10,15,20]},
+            
+            #PPO specific
+            'clip_range': {'values': [0.1, 0.2, 0.3]},              # Épsilon (ε)
+            'ent_coef': {'values': [0.0, 0.0001, 0.001, 0.01]},     # c2 (Coeficiente de entropía)
+            'vf_coef': {'values': [0.5, 0.75, 1.0]},                # c1 (Coeficiente de valor)
+            'gae_lambda': {'min': 0.9, 'max': 1.0},                 # λ_GAE
+            'target_kl': {'min': 0.003, 'max': 0.03},               # Límite de divergencia KL
+            'normalize_advantage': {'values': [True, False]}        # Normalización
+        }
+    }
+
+    def sweep_train():
+        run = wandb.init(sync_tensorboard=True)
+        config = wandb.config
+
+        # batch_size debe ser factor de n_steps y menor o igual
+        if config.batch_size > config.n_steps:
+            config.batch_size = config.n_steps
+
+        env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        model = PPO("MlpPolicy", 
+                    env_sim, 
+                    verbose=0, 
+                    learning_rate=config.learning_rate,
+                    gamma=config.gamma,
+                    n_steps=config.n_steps,
+                    batch_size=config.batch_size,
+                    n_epochs=config.n_epochs,
+                    clip_range=config.clip_range,
+                    ent_coef=config.ent_coef,
+                    vf_coef=config.vf_coef,
+                    gae_lambda=config.gae_lambda,
+                    target_kl=config.target_kl,
+                    normalize_advantage=config.normalize_advantage,
+                    tensorboard_log=f"./logs_tensorboard/sweep_{run.id}",
+                    device=device)
+
+        wandb_callback = WandbCallback(
+            gradient_save_freq=1000,
+            model_save_path=f"models/sweep_{run.id}",
+            verbose=2
+        )
+
+        model.learn(total_timesteps=iterations, callback=wandb_callback)
+        # Cerramos el run
+        run.finish()
+
+    sweep_id = wandb.sweep(sweep_config, project="LoadBalancerAutoScaler-DRL")
+    
+    wandb.agent(sweep_id, sweep_train, count=15)
+
 
 if __name__ == "__main__":
     import argparse
@@ -117,3 +190,5 @@ if __name__ == "__main__":
         train_phase_1_simulation(nodes=args.nodes, iterations=args.iterations, file=args.file)
     elif args.comando == "train_phase_2_real_world":
         train_phase_2_real_world(nodes=args.nodes, iterations=args.iterations, file=args.file)
+    elif args.comando == "sweep":
+        run_wandb_sweep(nodes=args.nodes, iterations=args.iterations)

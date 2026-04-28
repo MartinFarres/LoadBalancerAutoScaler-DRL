@@ -4,9 +4,10 @@ import requests
 import sys
 import argparse
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Load Balancer AutoScaler DRL run script')
-    parser.add_argument('-p', '--pipeline', type=str, choices=['real', 'simulado', 'test_ppo', 'test_baseline', 'test_pid', 'all'], default='all', help='Pipeline to run')
+    parser.add_argument('-p', '--pipeline', type=str, choices=['real', 'simulado', 'test_ppo', 'test_baseline', 'test_pid', 'all', 'sweep'], default='all', help='Pipeline to run')
     parser.add_argument('-n', '--nodes', type=int, default=5, help='Amount of nodes to run the training')
     parser.add_argument('-f', '--file', type=str, default='training_metrics.csv', help='Name of the CSV file to save metrics (will append timestamp to avoid overwrites)')
     parser.add_argument('-si', '--simulated_iterations', type=int, default=50000, help='Simulated training iterations')
@@ -129,6 +130,21 @@ def test_pid(processes, args):
     
     down_processes(processes)
 
+def wandb_sweep(args):
+    print("[1/1] Lanzando proceso de W&B Sweep... ")
+    
+    cmd = [
+        sys.executable, "environment/train_agent.py", "sweep",
+        "--nodes", str(args.nodes),
+        "--iterations", "200000" # Iteraciones recomendadas para el sweep
+    ]
+    sweep_process = subprocess.Popen(cmd)
+
+    try:
+        sweep_process.wait()
+    except KeyboardInterrupt:
+        print("\n\n Sweep interrumpido por el usuario (Ctrl+C).")
+
 
 def init_processes(nodes):
     processes = []
@@ -223,5 +239,7 @@ if __name__ == "__main__":
         test_baseline(init_processes(args.nodes), args) 
         test_pid(init_processes(args.nodes), args) 
         test_agent(init_processes(args.nodes), args) 
+    elif comando == "sweep":
+        wandb_sweep(args)
     else:
         print(f"Comando desconocido: {comando}")
