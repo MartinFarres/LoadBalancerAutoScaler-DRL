@@ -43,14 +43,13 @@ En el contexto del presente trabajo, estos componentes se instancian de la sigui
 
 El **agente** constituye la entidad lógica responsable de observar el estado del sistema y seleccionar las acciones de escalado a ejecutar. Su dominio de actuación es el **entorno (environment)**, conformado por el cluster de contenedores y la infraestructura Docker sobre la que operan los servicios.
 
-Para tomar decisiones, el agente percibe el **estado ($S$)** del entorno, una representación cuantitativa de la situación actual del sistema, compuesta por métricas como el porcentaje de uso de CPU y memoria reportadas por la API de Docker. A partir de dicha representacion, selecciona una de las **acciones ($A$)** disponibles: Incrementar el numero de réplicas, reducirlo  o mantener la configuracion actual.
+Para tomar decisiones, el agente percibe el **estado ($S$)** del entorno, una representación cuantitativa de la situación actual del sistema, compuesta por métricas como el porcentaje de uso de CPU y memoria reportadas por la API de Docker. A partir de dicha representacion, selecciona una de las **acciones ($A$)** disponibles: Incrementar el numero de réplicas, reducirlo, mantener la configuracion actual o balancear la carga entre los nodos activos.
 
-Tras ejecutar cada  acción, el agente recibe una **recompensa ($R$)** que retroalimenta al agente. Un valor positivo indica una gestión eficiente de los recursos, uno negativo refleja condiciones indeseables como la saturación del servicio o la subutilización del hardware. Este mecanismo de retroalimentación es el que permite al agente ajustar su comportamiento sin requerir ejemplos supervisados (Sutton & Barto, 2018).
+Tras ejecutar cada acción, el agente recibe una **recompensa ($R$)** que retroalimenta al agente. Un valor negativo pero cercano a cero indica una gestión eficiente de los recursos mientras que, un valor lejano a cero refleja condiciones indeseables como la saturación del servicio o la subutilización del hardware. Este mecanismo de retroalimentación es el que permite al agente ajustar su comportamiento sin requerir ejemplos supervisados (Sutton & Barto, 2018).
 
 El nucleo de nuestro agente es su **política ($\pi$)**, ésta representa la estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado. El objetivo del entrenamiento es encontrar una política óptima ($\pi^*$) que maximice la recompensa acumulada esperada bajo cualquier escenario de carga, garantizando así la estabilidad del cluster (Russell & Norvig, 2010).
 
 Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, se recurre a algoritmos avanzados como Q-Learning, Deep Q-Network (DQN) y Proximal Policy Optimization (PPO).
-
 
 ### Proximal Policy Optimization (PPO)
 
@@ -69,6 +68,8 @@ $$r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$$
 En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que limita el valor de $r_t(\theta)$ dentro de un rango determinado. Este proceso asegura que las actualizaciones sean pequeñas y controladas, manteniendo la nueva política "cerca" de la anterior, garantizando una convergencia más estable y robusta.
 
 ### Justificacion
+
+#### Nota: Mejorar la redaccion, haciendo uso de parrafos corto y claros. Minimizar el uso de listas
 
 Para este proyecto se ha decidido utilizar el algoritmo PPO:
 
@@ -120,7 +121,7 @@ Esto simuló el desbordamiento del búfer (Queue overflow), manteniendo una tasa
 
 #### Simulación del Consumo de Memoria RAM (Ley de Little)
 
-En los servidores de aplicaciones web modernos, el consumo de memoria volátil (RAM) presenta un comportamiento mixto: un piso de memoria estática requerido por el entorno de ejecución y un consumo dinámico proporcional a la cantidad de conexiones activas que el contenedor debe mantener. s
+En los servidores de aplicaciones web modernos, el consumo de memoria volátil (RAM) presenta un comportamiento mixto: un piso de memoria estática requerido por el entorno de ejecución y un consumo dinámico proporcional a la cantidad de conexiones activas que el contenedor debe mantener.
 
 Para modelar el consumo dinámico en el entorno simulado, se utilizó la **Ley de Little** ($L = \lambda W$), un teorema fundamental de la teoría de colas que establece que el número promedio de elementos en un sistema estable ($L$) es igual a la tasa promedio de llegada ($\lambda$) multiplicada por el tiempo promedio que un elemento pasa en el sistema ($W$). Simplificando la ecuación para el modelo M/M/1 implementado en el entorno, el número de peticiones concurrentes en la memoria del servidor se modeló como:
 
@@ -144,28 +145,22 @@ Esta integración permite que el agente PPO aprenda que un aumento en la utiliza
 
 # Diseño Experimental
 
-Se deberá presentar una sección en donde se describa todo el proceso realizado para poner a prueba el o los algoritmos utilizados. Esto deberá incluir primeramente:
-
-- Las métricas consideradas a fin de establecer el alcance y rendimiento del algoritmo sobre el problema dado.
-- Las herramientas utilizadas para la implementación como así también para medir el rendimiento del algoritmo (frameworks, simuladores, etc.).
 - En aquellos casos en donde resulte adecuado, se deberá indicar todo el proceso realizado para la obtención y adecuación del conjunto de datos.
 - Un detalle y justificación de los experimentos realizados a fin de determinar los resultados. Este deberá incluir tablas y/o gráficos que resuman los resultados.
-
-Evitar incluir en esta sección código fuente. Este se puede incluir como un apéndice al final del documento. Si es posible, incluir pequeños fragmentos de pseudo-código de ser necesario.
 
 ## Métricas de Desempeño
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
-**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo. 
+**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo.
 
 $$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
- Donde:
+Donde:
+
 - $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
 - $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
-- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado 
-para representar la variabilidad natural del sistema
-
+- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado
+  para representar la variabilidad natural del sistema
 
 Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
@@ -174,30 +169,32 @@ Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcent
 $$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
 
 Donde:
-- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
-- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor 
-$(1024 \times 1024 \times 1024 \text{ bytes})$
 
-En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. 
-En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco 
-Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima 
-el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican 
-riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para 
+- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
+- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor
+  $(1024 \times 1024 \times 1024 \text{ bytes})$
+
+En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker.
+En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco
+Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima
+el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican
+riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para
 evitar la caída del servicio.
 
-**Latencia (latency):**  Representa el tiempo de respuesta promedio de las 
-peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout 
+**Latencia (latency):** Representa el tiempo de respuesta promedio de las
+peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout
 máximo de 2000 ms.
 
 $$\text{latency} = \frac{t_{\text{respuesta}}}{t_{\text{timeout}}}$$
 
 Donde:
+
 - $t_{\text{respuesta}}$ = tiempo de respuesta observado (ms)
 - $t_{\text{timeout}}$ = límite máximo configurado de 2000 ms
 
-En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de 
-las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de 
-colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado 
+En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de
+las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de
+colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado
 en $[0, 1]$.
 
 **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado. En el entorno real, se extrae directamente de las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de saturación descrito en el Marco Teórico, permaneciendo en $0$ para valores de utilización $\rho < 0.9$ y creciendo hacia $1$ a medida que el nodo supera su capacidad. Se encuentra normalizado en $[0, 1]$.
@@ -212,11 +209,11 @@ En el entorno real, el valor se determina a partir del peso asignado por _HAProx
 
 La implementación del sistema integra herramientas encargadas tanto de la gestión de la infraestructura de contenedores, el entrenamiento del agente mediante aprendizaje por refuerzo, y la validación del comportamiento bajo condiciones de carga representativas.
 
-Para el desarrollo e implementación del sistema se utilizó **Python** como lenguaje principal. La contenerización de los servicios backend y la gestión del cluster fueron realizadas mediante **Docker**, administrado programáticamente a través de su SDK oficial, junto a **HAProxy 3.0** como balanceador de carga. 
+Para el desarrollo e implementación del sistema se utilizó **Python** como lenguaje principal. La contenerización de los servicios backend y la gestión del cluster fueron realizadas mediante **Docker**, administrado programáticamente a través de su SDK oficial, junto a **HAProxy 3.0** como balanceador de carga.
 
 La interfaz entre el agente y la infraestructura fue definida utilizando **Gymnasium**, con el tipo `spaces.Box` es posible abstraer el cluster como un entorno de RL compatible con bibliotecas de entrenamiento. El entrenamiento del agente PPO se implementó sobre **Stable-Baselines3**, seleccionado para proveer una implementación optimizada y validada del algoritmo sobre **PyTorch**.
 
- La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
+La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
 
 ## Proceso de entrenamiento
 
@@ -230,11 +227,43 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 
 - _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
+## Diseño de la funcion de recompensa
+
+## Infraestructura de Telemetría y Monitoreo
+
 # Análisis y discusión de resultados
 
-En esta sección se deberá realizar un mínimo análisis sobre los resultados obtenidos.  
-El objetivo es tratar de razonar sobre las causas de los resultados obtenidos en la fase experimental a fin de proveer una posible justificación.  
-Aquí se incluyen posibles limitaciones en los algoritmos elegidos, en la simulación planteada, los datos, etc.
+## Resultados de la Optimización (Hiperparámetros)
+
+### Analisis de Importancia y Coorelacion
+
+(va imagen de correlacion entre las metricas y la recompensa)
+
+### Estudio de convergencia
+
+(va grafico de las lineas agrupadas)
+
+### Justificacion de la estabilidad
+
+(clip_range)
+
+### Justificacion de la seleccion de Hiperparametros
+
+(va grafico coordenadas paralelas)
+
+## Evaluación del escalamiento (Runs: 3,5,10,20 nodos)
+
+### Comportamiento del agente ante el aumento de la complejidad del entorno
+
+### Métricas de desempeño del cluster
+
+## Comparativa vs. baselines de la industria
+
+### vs. Umbrales clasicos (Static thresholds)
+
+### vs. Controlador PID
+
+### Resumen de resultados
 
 # Conclusiones finales
 
@@ -242,10 +271,10 @@ Observaciones finales sobre el tema y es muy importante indicar aquellas tareas 
 
 ## Bibliografía
 
-\[1] Sutton, R. S., & Barto, A. G. (2018). *Reinforcement Learning: An Introduction* 
+\[1] Sutton, R. S., & Barto, A. G. (2018). _Reinforcement Learning: An Introduction_
 (2nd ed.). The MIT Press.
 
-\[2] Russell, S., & Norvig, P. (2010). *Artificial Intelligence: A Modern Approach* 
+\[2] Russell, S., & Norvig, P. (2010). _Artificial Intelligence: A Modern Approach_
 (3rd ed.). Prentice Hall.
 
 \[3] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
