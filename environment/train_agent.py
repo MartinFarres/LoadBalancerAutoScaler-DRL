@@ -49,13 +49,13 @@ def train_phase_1_simulation(nodes=5, iterations=50000, file="training_metrics.c
     model = PPO("MlpPolicy", 
             env_sim, 
             verbose=1, 
-            n_steps=2048,           
-            batch_size=256,         
-            n_epochs=10,            
-            learning_rate=linear_schedule(0.01),
-            gamma=0.95,             
-            ent_coef=0.01,          
-            clip_range=0.2,         
+            n_steps=2048,           # Ganador indiscutible en la grafica de lineas
+            batch_size=128,         # Buen equilibrio segun coordenadas paralelas
+            learning_rate=0.0003,   # Bajo, debido a la fuerte correlacion negativa
+            clip_range=0.3,         # El que mas rapido convergio
+            vf_coef=0.5,            # Vital: Evita el colapso mostrado en el scatter plot
+            gamma=0.95,             # Las lineas amarillas pasaban por este rango inferior
+            ent_coef=0.01,          # Irrelevante segun el scatter plot, se deja bajo
             tensorboard_log=directory_logs,
             device=device)
 
