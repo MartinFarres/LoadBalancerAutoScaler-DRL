@@ -198,7 +198,11 @@ class LoadBalancerEnv(gym.Env):
             # 1: Lineal
             # 2: Exponencial
             # 3: Steps
-            self.sim_traffic_fn = np.random.randint(0, 4)
+            # 4: Trend
+            # 5: Seasonal/Sine
+            # 6: Sawtooth
+            # 7: Spike + Recovery
+            self.sim_traffic_fn = np.random.randint(0, 8) #(0, 4)
             self.sim_fn_start_step = self.current_step
             self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
             
@@ -220,6 +224,20 @@ class LoadBalancerEnv(gym.Env):
             self.sim_agresiveness_coeficient = np.random.uniform(0.7, 1.5) # de-formacion de las funciones para que no sean tan perfectas
             # Step
             self.sim_step_count= np.random.randint(3, 20)
+            # Trend 
+            self.sim_trend_direction = np.random.choice([1, -1])
+            self.sim_trend_rate = np.random.uniform(0.5, 3.0)
+            # Seasonal/Sine 
+            self.sim_period = np.random.randint(30, 100)
+            self.sim_amplitude = np.random.uniform(0.2, 0.6)
+            # Sawtooth 
+            self.sim_rise_ratio = np.random.uniform(0.15, 0.35)
+            self.sim_peak_value = self.sim_total_users * np.random.uniform(0.6, 0.95)
+            # Spike + Recovery 
+            self.sim_spike_start = np.random.uniform(0.2, 0.5)
+            self.sim_spike_magnitude = self.sim_total_users * np.random.uniform(0.5, 0.9)
+            self.sim_recovery_slope = np.random.uniform(0.03, 0.10)
+        
 
         relative_step = self.current_step - self.sim_fn_start_step
         mid_step = self.sim_fn_duration / 2
@@ -287,7 +305,40 @@ class LoadBalancerEnv(gym.Env):
                 steps_down = (relative_step - mid_step) // step_size
                 workload = peak_users - (users_per_step * steps_down)
 
+        # Linear Trend 
+        elif self.sim_traffic_fn == 4:
+            trend_component = self.sim_trend_direction * self.sim_trend_rate * relative_step
+            workload = self.sim_base + trend_component
+
+        # Seasonal/Sine 
+        elif self.sim_traffic_fn == 5:
+            phase = (2 * math.pi * relative_step) / self.sim_period
+            seasonal = math.sin(phase)
+            workload = self.sim_base + (self.sim_base * self.sim_amplitude * seasonal)
+        
+        # Sawtooth 
+        elif self.sim_traffic_fn == 6:
+            cycle_pos = (relative_step % self.sim_fn_duration) / self.sim_fn_duration
+            if cycle_pos < self.sim_rise_ratio:
+                rise_progress = cycle_pos / self.sim_rise_ratio
+                workload = self.sim_base + (self.sim_peak_value - self.sim_base) * rise_progress
+            else:
+                fall_progress = (cycle_pos - self.sim_rise_ratio) / (1.0 - self.sim_rise_ratio)
+                workload = self.sim_peak_value - (self.sim_peak_value - self.sim_base) * fall_progress
+                
+        # Spike + Recovery
+        elif self.sim_traffic_fn == 7:
+            spike_trigger = self.sim_fn_duration * self.sim_spike_start
+            if relative_step < spike_trigger:
+                workload = self.sim_base
+            elif relative_step < spike_trigger + 5:
+                workload = self.sim_spike_magnitude
+            else:
+                recovery_time = relative_step - spike_trigger - 5
+                workload = max(self.sim_base, self.sim_spike_magnitude - (self.sim_recovery_slope * recovery_time))
+
         workload = max(10.0, workload)
+
 
         # Ruido (Jitter)
         # vibracion del 5%
