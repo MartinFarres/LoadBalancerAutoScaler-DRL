@@ -228,6 +228,24 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 - _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
 ## Diseño de la funcion de recompensa
+La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en la señal que se utiliza para indicar cuando escalar y que penaliza los comportamientos indeseables [1]. Se optó por una función de penalización pura, es decir sin términos positivos, de forma que el agente aprenda a minimizar el daño. 
+ 
+Como caso especial, si el número de contenedores activos es cero, la función retorna inmediatamente R=−200, asegurando que el agente nunca aprenda a vaciar el cluster independientemente de las otras señales.
+Para el resto de los casos, la función agrega cuatro componentes de penalización calculados sobre los valores promedios de los contenedores activos:
+
+$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu\_sat}} + \overline{\text{ram\_sat}}\right) \right] - \delta$$
+
+Los componentes se organizan en dos grupos según el impacto sobre la experiencia del usuario. La latencia y los errores HTTP constituyen las métricas orientadas al usuario (*user-facing*), para la cuales su degradación es perceptible directamente por el cliente y por tanto reciben las penalizaciones más severas. El costo operativo y la saturación de recursos son métricas orientadas al operador (*operator-facing*), y su impacto es interno al sistema y el usuario no los percibe, por lo que actúan como señales de fondo con peso unitario.
+
+Los errores HTTP reciben la penalización más elevada ($W_{err} = 50.0$) dado que una respuesta fallida representa una degradación crítica del 
+servicio. La latencia se penaliza con $W_{lat} = 2.0$ aplicado cuadráticamente, haciendo al agente progresivamente más sensible a los picos. El costo operativo y la saturación de recursos comparten peso unitario ($W_{cost} = W_{sat} = 1.0$), desincentivando el sobreaprovisionamiento y el uso excesivo de recursos sin competir con las penalizaciones de calidad de servicio.
+
+Finalmente, el término $\delta$ penaliza las decisiones de scaling en los extremos del espacio 
+de acción:
+
+$$\delta = \begin{cases} 0.05 & \text{si } a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7 \\ 0 & \text{en otro caso} \end{cases}$$
+
+Su propósito es desincentivar el comportamiento oscilante de escalar y desescalar continuamente sin evidencia suficiente, favoreciendo decisiones moderadas cuando el estado del cluster no lo justifica.
 
 ## Infraestructura de Telemetría y Monitoreo
 
