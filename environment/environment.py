@@ -4,6 +4,10 @@ import time
 from gymnasium import spaces
 import numpy as np
 import math
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.traffic_generator import TrafficGenerator
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -46,6 +50,14 @@ class LoadBalancerEnv(gym.Env):
 
         # Memoria para la Espera Dinamica
         self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+
+        # Variables exclusivas para el modo simulado
+        if self.simulated:
+            self.current_step = 0
+            self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
+            self.sim_active_containers = True
+            
+            self.traffic_gen = TrafficGenerator()
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -188,175 +200,10 @@ class LoadBalancerEnv(gym.Env):
             
         return np.array(new_state, dtype=np.float32)
 
-
     def get_dynamic_simulated_workload(self):
-
-        # Inicializamos las variables de estado la primera vez
-        if not hasattr(self, 'sim_traffic_fn') or (self.current_step - self.sim_fn_start_step >= self.sim_fn_duration):
-            # Decidimos los tiempos limites y funciones a usar 
-            # 0: Double Wave
-            # 1: Lineal
-            # 2: Exponencial
-            # 3: Steps
-            # 4: Trend
-            # 5: Seasonal/Sine
-            # 6: Sawtooth
-            # 7: Spike + Recovery
-            self.sim_traffic_fn = np.random.randint(0, 8) #(0, 4)
-            self.sim_fn_start_step = self.current_step
-            self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
-            
-            self.sim_total_users = 450 
-            
-            # Se generan los valores necesarios para cada funcion
-            # Double wave
-            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.2, 0.95)
-            self.sim_min = self.sim_total_users * np.random.uniform(0.05, 0.20)
-            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.2, 0.95)
-            self.sim_shift_peak_one = np.random.uniform(0.1 , 0.4)
-            self.sim_shift_peak_two = np.random.uniform(0.6 , 0.9)
-            self.sim_width_peak_one = np.random.uniform(0.05, 0.2)
-            self.sim_width_peak_two = np.random.uniform(0.05, 0.2)
-            # Exponencial
-            self.sim_base = self.sim_total_users * np.random.uniform(0.02, 0.15)
-            # Lineal
-            self.sim_scale_rate = np.random.randint(1, 10)
-            self.sim_agresiveness_coeficient = np.random.uniform(0.7, 1.5) # de-formacion de las funciones para que no sean tan perfectas
-            # Step
-            self.sim_step_count= np.random.randint(3, 20)
-            # Trend 
-            self.sim_trend_direction = np.random.choice([1, -1])
-            self.sim_trend_rate = np.random.uniform(0.5, 3.0)
-            # Seasonal/Sine 
-            self.sim_period = np.random.randint(30, 100)
-            self.sim_amplitude = np.random.uniform(0.2, 0.6)
-            # Sawtooth 
-            self.sim_rise_ratio = np.random.uniform(0.15, 0.35)
-            self.sim_peak_value = self.sim_total_users * np.random.uniform(0.6, 0.95)
-            # Spike + Recovery 
-            self.sim_spike_start = np.random.uniform(0.2, 0.5)
-            self.sim_spike_magnitude = self.sim_total_users * np.random.uniform(0.5, 0.9)
-            self.sim_recovery_slope = np.random.uniform(0.03, 0.10)
-        
-
-        relative_step = self.current_step - self.sim_fn_start_step
-        mid_step = self.sim_fn_duration / 2
-        workload = 10.0 # Valor por defecto
-
-        # Double Wave
-        if self.sim_traffic_fn == 0:
-            # e**(−(t−u/o​)**2)
-            # t -> relative_time
-            # u(centro) -> time_limit * shift_peak
-            # o(ancho) -> width
-            workload = (
-                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_one) / 
-                                                                  (self.sim_fn_duration * self.sim_width_peak_one)) ** 2)
-                +
-                (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_two) / 
-                                                                  (self.sim_fn_duration * self.sim_width_peak_two)) ** 2)
-                + self.sim_min
-            )
-            
-        # Lineal
-        elif self.sim_traffic_fn == 1:
-            if relative_step <= mid_step:
-                 # Subida 
-                workload = self.sim_base + (self.sim_scale_rate * relative_step * self.sim_agresiveness_coeficient)
-            else:
-                # Bajada
-                peak = self.sim_base + (self.sim_scale_rate * mid_step * self.sim_agresiveness_coeficient)
-                time_down = relative_step - mid_step
-                workload = peak - (self.sim_scale_rate * time_down * self.sim_agresiveness_coeficient)
-
-        # Exponencial
-        elif self.sim_traffic_fn == 2:
-            peak_time = self.sim_fn_duration * 0.7
-            base_users = max(10, self.sim_base)
-            if relative_step <= peak_time:
-                 # Subida 
-                k = math.log(self.sim_total_users / base_users) / max(1, peak_time) * self.sim_agresiveness_coeficient
-                try: 
-                    workload = base_users * math.exp(k * relative_step)
-                except OverflowError:
-                    workload = self.sim_total_users
-            else:
-                # Bajada
-                time_down = relative_step - peak_time
-                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time) * self.sim_agresiveness_coeficient
-                workload = self.sim_total_users - (drop_rate * time_down)
-
-        # Steps 
-        elif self.sim_traffic_fn == 3:
-
-            # Calculamos dinamicamente el tamaño de los escalones
-            step_size = self.sim_fn_duration // self.sim_step_count # Ancho steps
-            users_per_step = (self.sim_total_users - self.sim_base) / (self.sim_step_count / 2) # Altura steps
-
-            if relative_step <= mid_step:
-                 # Subida 
-                current_step_idx = relative_step // step_size
-                workload = self.sim_base + (users_per_step * current_step_idx)
-
-            else:
-                # Bajada
-                peak_steps = mid_step // step_size
-                peak_users = self.sim_base + (users_per_step * peak_steps)
-                steps_down = (relative_step - mid_step) // step_size
-                workload = peak_users - (users_per_step * steps_down)
-
-        # Linear Trend 
-        elif self.sim_traffic_fn == 4:
-            trend_component = self.sim_trend_direction * self.sim_trend_rate * relative_step
-            workload = self.sim_base + trend_component
-
-        # Seasonal/Sine 
-        elif self.sim_traffic_fn == 5:
-            phase = (2 * math.pi * relative_step) / self.sim_period
-            seasonal = math.sin(phase)
-            workload = self.sim_base + (self.sim_base * self.sim_amplitude * seasonal)
-        
-        # Sawtooth 
-        elif self.sim_traffic_fn == 6:
-            cycle_pos = (relative_step % self.sim_fn_duration) / self.sim_fn_duration
-            if cycle_pos < self.sim_rise_ratio:
-                rise_progress = cycle_pos / self.sim_rise_ratio
-                workload = self.sim_base + (self.sim_peak_value - self.sim_base) * rise_progress
-            else:
-                fall_progress = (cycle_pos - self.sim_rise_ratio) / (1.0 - self.sim_rise_ratio)
-                workload = self.sim_peak_value - (self.sim_peak_value - self.sim_base) * fall_progress
-                
-        # Spike + Recovery
-        elif self.sim_traffic_fn == 7:
-            spike_trigger = self.sim_fn_duration * self.sim_spike_start
-            if relative_step < spike_trigger:
-                workload = self.sim_base
-            elif relative_step < spike_trigger + 5:
-                workload = self.sim_spike_magnitude
-            else:
-                recovery_time = relative_step - spike_trigger - 5
-                workload = max(self.sim_base, self.sim_spike_magnitude - (self.sim_recovery_slope * recovery_time))
-
-        workload = max(10.0, workload)
-
-
-        # Ruido (Jitter)
-        # vibracion del 5%
-        standar_deviation = workload * 0.05
-        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
-        workload += jitter
-
-        # Outlier (Evento Extremo)
-        # generacion random de probabilidad 2% para extremos
-        prob = np.random.randint(1, 101)
-        if prob <= 2:
-            workload = self.sim_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
-        elif prob >= 99:
-            workload = self.sim_total_users # simulamos un pico (ddos, viral, etc)
-
-
-
-        return max(10, min(workload, self.sim_total_users))
+        # Obtenemos la carga pasándole el step actual de la simulación
+        workload = self.traffic_gen.get_workload(self.current_step)
+        return workload
 
     def get_simulated_metrics(self, action):
         total_workload = self.get_dynamic_simulated_workload()
