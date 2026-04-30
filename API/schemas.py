@@ -11,3 +11,7 @@ class ContainerMetrics(BaseModel):
     latency: float = 0.0
     error_rate: float = 0.0
     status: float = 0.0
+
+class ClusterMetrics(BaseModel):
+    nodes: list[ContainerMetrics]
+    workload_norm: float = 0.0

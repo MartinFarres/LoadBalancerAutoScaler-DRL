@@ -14,6 +14,7 @@ class ClusterOrchestration():
         pass
 
     def set_params_and_start(self, n_max=10, max_memory=1024, node_name="lbas_node"):
+        
         self.n_max = n_max
         self.node_name = node_name
         self.last_active_container_idx = 0
@@ -26,6 +27,7 @@ class ClusterOrchestration():
         
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
+        self.max_req_rate = 200.0 
         
         # Fast Metrics C Collector
         self.lib = ctypes.CDLL('./libfastmetrics.so')
@@ -178,6 +180,25 @@ class ClusterOrchestration():
         
         return container_metrics
     
+    def get_workload_norm(self) -> float:
+        """
+        Lee el request rate actual teh HAProxy frontend stats y lo normaliza.
+        req_rate = requests/sec
+        """
+        try:
+            csv_data = self.send_haproxy_command("show stat")
+            if csv_data.startswith("# "):
+                csv_data = csv_data[2:]
+            import csv, io
+            reader = csv.DictReader(io.StringIO(csv_data))
+            for row in reader:
+                # Frontend row: pxname="http_in", svname="FRONTEND"
+                if row.get("pxname") == "http_in" and row.get("svname") == "FRONTEND":
+                    req_rate = float(row.get("req_rate") or 0.0)
+                    return min(1.0, req_rate / self.max_req_rate)
+        except Exception as e:
+            print(f"Error reading workload from HAProxy: {e}")
+        return 0.0
 
     def _fetch_single_container_metrics(self, i: int, haproxy_stats_dict: dict):
         """Método worker que se ejecutará en paralelo para cada contenedor"""

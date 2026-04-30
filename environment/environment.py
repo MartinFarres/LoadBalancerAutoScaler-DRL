@@ -28,7 +28,7 @@ class LoadBalancerEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=0.0, 
             high=1.0, 
-            shape=(self.n_max * 6,), 
+            shape=(self.n_max * 6 + 1,), 
             dtype=np.float32
         )
         
@@ -40,7 +40,7 @@ class LoadBalancerEnv(gym.Env):
             dtype=np.float32
         )
         
-        self.actual_state = np.zeros(self.n_max * 6, dtype=np.float32)
+        self.actual_state = np.zeros(self.n_max * 6 + 1, dtype=np.float32)
 
         # Variables exclusivas para el modo simulado
         if self.simulated:
@@ -168,28 +168,31 @@ class LoadBalancerEnv(gym.Env):
         new_state = []
         try:
             response = requests.get(f"{self.api_url}/metrics").json()
+
+            workload_norm = float(response.get("workload_norm", 0.0))
+            nodes = response.get("nodes", response)
             
             MAX_LATENCY_MS = 2000.0 # 2 segundos máximo
             
             for i in range(self.n_max):
                 
-                cpu_raw = response[i]["cpu_usg"]
+                cpu_raw = nodes[i]["cpu_usg"]
                 cpu_norm = min(1.0, max(0.0, cpu_raw))
                 
-                ram_raw = response[i]["ram_usg_pct"]
+                ram_raw = nodes[i]["ram_usg_pct"]
                 ram_norm = min(1.0, max(0.0, ram_raw))
                 
-                ram_tot_raw = response[i]["ram_total_normalize"]
+                ram_tot_raw = nodes[i]["ram_total_normalize"]
                 ram_tot_norm = min(1.0, max(0.0, ram_tot_raw))
                 
                 # Convertimos milisegundos a una escala 0.0 - 1.0
-                latency_raw = response[i]["latency"]
+                latency_raw = nodes[i]["latency"]
                 latency_norm = min(1.0, latency_raw / MAX_LATENCY_MS)
                 
-                error_raw = response[i]["error_rate"]
+                error_raw = nodes[i]["error_rate"]
                 error_norm = min(1.0, max(0.0, error_raw))
                 
-                status = float(response[i]["status"])
+                status = float(nodes[i]["status"])
                 
                 new_state.extend([cpu_norm, ram_norm, ram_tot_norm, latency_norm, error_norm, status])
                 
@@ -198,6 +201,9 @@ class LoadBalancerEnv(gym.Env):
             new_state = [0.0] * (self.n_max * 6)
             new_state[5] = 1.0 
             
+        # agregamos workload 
+        new_state.append(workload_norm)
+        
         return np.array(new_state, dtype=np.float32)
 
     def get_dynamic_simulated_workload(self):
@@ -293,7 +299,9 @@ class LoadBalancerEnv(gym.Env):
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
-
+        # At the end, before returning new_state:
+        workload_norm = np.float32(total_workload / self.traffic_gen.total_users)
+        new_state = np.append(new_state, workload_norm)
         return new_state
 
     def reward_function(self, state, action, cant_active_containers):
@@ -304,14 +312,19 @@ class LoadBalancerEnv(gym.Env):
         W_ERRORS = 50.0      
         W_COST = 1.0         
         W_SATURATION = 1.0   
-        W_RAM_SATURATION = 1.0 
+        W_RAM_SATURATION = 1.0
+        W_OVERPROVISION = 2.0 # Penaliza nodos idle 
         
         if cant_active_containers == 0:
             return -200.0 
             
+        # obtenemos carga normalizada
+        workload_norm = float(state[-1])
+        
         # Variables para acumular
         avg_latency = 0.0
         avg_errors = 0.0
+        avg_cpu = 0.0
         avg_cpu_sat = 0.0
         avg_ram_sat = 0.0
         
@@ -327,6 +340,7 @@ class LoadBalancerEnv(gym.Env):
 
                 avg_latency += latency
                 avg_errors += errores
+                avg_cpu += cpu_pct
                 
                 if cpu_pct > 0.80:
                     avg_cpu_sat += (cpu_pct - 0.80)
@@ -336,17 +350,34 @@ class LoadBalancerEnv(gym.Env):
         # PROMEDIAMOS las métricas de los nodos encendidos
         avg_latency /= cant_active_containers
         avg_errors /= cant_active_containers
+        avg_cpu /= cant_active_containers
         avg_cpu_sat /= cant_active_containers
         avg_ram_sat /= cant_active_containers
         
-        # Calculo de penalizaciones (ahora usando los promedios reales)
-        latency_penalty = W_LATENCY * (avg_latency ** 2) 
+        # Calculo de penalizaciones
+        
+        # Tope de Latencia (SLA Cap)
+        # Asumiendo que <= 0.1-200ms es una buena latencia
+        if avg_latency <= 0.1:
+            latency_penalty = 0.0
+        else:
+            # Si la supera, se penaliza al cuadrado.
+            latency_penalty = W_LATENCY * (avg_latency ** 2) 
+            
         error_penalty = W_ERRORS * avg_errors 
         cost_penalty = W_COST * (cant_active_containers / self.n_max)
         saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
         
-        total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty)
+        # Castigo por CPU ocioso
+        # Si el cluster está usando menos del 40% de CPU promedio, sobran nodos.
+        CPU_TARGET_MIN = 0.40
+        if avg_cpu < CPU_TARGET_MIN:
+            # Mientras mas lejos del 40% y mas nodos hay, mayor el castigo
+            overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
+        else:
+            overprovision_penalty = 0.0
 
+        total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
         # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
         if scale_decision <= 0.3 or scale_decision >= 0.7:

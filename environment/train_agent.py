@@ -174,7 +174,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
 
     sweep_id = wandb.sweep(sweep_config, project="LoadBalancerAutoScaler-DRL")
     
-    wandb.agent(sweep_id, sweep_train, count=15)
+    wandb.agent(sweep_id, sweep_train, count=40)
 
 
 if __name__ == "__main__":
