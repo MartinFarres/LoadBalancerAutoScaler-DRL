@@ -1,7 +1,7 @@
 from stable_baselines3.common.env_checker import check_env
 from environment import LoadBalancerEnv
 
-env = LoadBalancerEnv(n_max=10, max_steps=100, max_memory=1024)
+env = LoadBalancerEnv(n_max=10, max_steps=100, max_memory=1024, simulated=True)
 
 print("Running Environment Checker...")
 check_env(env)

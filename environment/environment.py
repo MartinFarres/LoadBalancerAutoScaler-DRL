@@ -42,21 +42,13 @@ class LoadBalancerEnv(gym.Env):
         
         self.actual_state = np.zeros(self.n_max * 6 + 1, dtype=np.float32)
 
-        # Variables exclusivas para el modo simulado
-        if self.simulated:
-            self.current_step = 0
-            self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
-            self.sim_active_containers[0] = True
-
         # Memoria para la Espera Dinamica
         self.last_weights = np.zeros(self.n_max, dtype=np.float32)
 
         # Variables exclusivas para el modo simulado
         if self.simulated:
-            self.current_step = 0
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
-            self.sim_active_containers = True
-            
+            self.sim_active_containers[0] = True
             self.traffic_gen = TrafficGenerator()
 
     def reset(self, seed=None, options=None):
@@ -166,6 +158,7 @@ class LoadBalancerEnv(gym.Env):
 
     def get_real_metrics(self):
         new_state = []
+        workload_norm = 0.0
         try:
             response = requests.get(f"{self.api_url}/metrics").json()
 
@@ -316,11 +309,8 @@ class LoadBalancerEnv(gym.Env):
         W_OVERPROVISION = 2.0 # Penaliza nodos idle 
         
         if cant_active_containers == 0:
-            return -200.0 
-            
-        # obtenemos carga normalizada
-        workload_norm = float(state[-1])
-        
+            return -200.0
+
         # Variables para acumular
         avg_latency = 0.0
         avg_errors = 0.0
@@ -381,6 +371,6 @@ class LoadBalancerEnv(gym.Env):
         # Evitar bucle de prendido y apagado
         scale_decision = action[-1]
         if scale_decision <= 0.3 or scale_decision >= 0.7:
-            total_reward -= 0.05 
-        
-        return total_reward
+            total_reward -= 0.05
+
+        return float(total_reward)

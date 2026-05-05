@@ -52,10 +52,8 @@ class StressGenerator(LoadTestShape):
 
     def tick(self):
         run_time = self.get_run_time()
-        
+
         # Obtenemos la carga pasándole el tiempo de Locust
-        user_count = self.traffic_gen.get_workload(run_time)
-        run_time = self.get_run_time()
         user_count = self.traffic_gen.get_workload(run_time)
 
         # Pusheamos a la api bridge
