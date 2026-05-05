@@ -151,7 +151,8 @@ class LoadBalancerEnv(gym.Env):
             "cpu_avg": float(cpu_t),
             "ram_avg": float(ram_t),
             "latency_avg": float(lat_t),
-            "error_avg": float(err_t)
+            "error_avg": float(err_t),
+            "workload": float(self.actual_state[-1]) #add workload info to log
         }
         
         return self.actual_state, reward, terminated, truncated, info
