@@ -39,23 +39,29 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
 directory_logs = "./logs_tensorboard/"
 MODEL_PATH = "ppo_lb_simulated_base"
 
-def train_phase_1_simulation(nodes=5, iterations=50000, file="training_metrics.csv"):
+def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento en Simulacion Pura para {iterations} pasos con {nodes} nodos...")
     
     env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    model = PPO("MlpPolicy", 
-            env_sim, 
-            verbose=1, 
-            n_steps=2048,           # Ganador indiscutible en la grafica de lineas
-            batch_size=128,         # Buen equilibrio segun coordenadas paralelas
-            learning_rate=0.0003,   # Bajo, debido a la fuerte correlacion negativa
-            clip_range=0.3,         # El que mas rapido convergio
-            vf_coef=0.5,            # Vital: Evita el colapso mostrado en el scatter plot
-            gamma=0.95,             # Las lineas amarillas pasaban por este rango inferior
-            ent_coef=0.01,          # Irrelevante segun el scatter plot, se deja bajo
+    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: a616rj5a)
+    # reward=-149 vs. promedio de -715 en los otros 39 runs
+    model = PPO("MlpPolicy",
+            env_sim,
+            verbose=1,
+            n_steps=1024,
+            batch_size=256,
+            learning_rate=0.00119,
+            clip_range=0.3,
+            vf_coef=0.75,
+            gamma=0.878,
+            ent_coef=0.0001,
+            gae_lambda=0.976,
+            n_epochs=15,
+            target_kl=0.017,
+            normalize_advantage=True,
             tensorboard_log=directory_logs,
             device=device)
 
@@ -157,7 +163,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
                     ent_coef=config.ent_coef,
                     vf_coef=config.vf_coef,
                     gae_lambda=config.gae_lambda,
-                    target_kl=config.target_kl,
+                    # target_kl=config.target_kl,
                     normalize_advantage=config.normalize_advantage,
                     tensorboard_log=f"./logs_tensorboard/sweep_{run.id}",
                     device=device)
@@ -174,7 +180,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
 
     sweep_id = wandb.sweep(sweep_config, project="LoadBalancerAutoScaler-DRL")
     
-    wandb.agent(sweep_id, sweep_train, count=15)
+    wandb.agent(sweep_id, sweep_train, count=30)
 
 
 if __name__ == "__main__":

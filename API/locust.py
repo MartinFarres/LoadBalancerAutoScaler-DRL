@@ -3,6 +3,7 @@ import numpy as np
 import math
 import sys
 import os
+import requests
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
 
@@ -27,6 +28,7 @@ class StressUser(HttpUser):
         """Simula una subida de archivo grande o caché pesada"""
         self.client.get("/ram")
 
+BRIDGE_URL = "http://127.0.0.1:8000"
 
 class StressGenerator(LoadTestShape):
     """
@@ -50,8 +52,18 @@ class StressGenerator(LoadTestShape):
 
     def tick(self):
         run_time = self.get_run_time()
-        
+
         # Obtenemos la carga pasándole el tiempo de Locust
         user_count = self.traffic_gen.get_workload(run_time)
+
+        # Pusheamos a la api bridge
+        try:
+            requests.post(
+                f"{BRIDGE_URL}/workload",
+                params={"user_count": round(user_count), "total_users": self.total_users},
+                timeout=0.2  # non-blocking, don't stall Locust
+            )
+        except Exception:
+            pass
         
         return round(user_count), self.spawn_rate

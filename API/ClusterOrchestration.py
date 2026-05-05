@@ -14,6 +14,7 @@ class ClusterOrchestration():
         pass
 
     def set_params_and_start(self, n_max=10, max_memory=1024, node_name="lbas_node"):
+        
         self.n_max = n_max
         self.node_name = node_name
         self.last_active_container_idx = 0
@@ -26,6 +27,7 @@ class ClusterOrchestration():
         
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
+        self.max_req_rate = 200.0 
         
         # Fast Metrics C Collector
         self.lib = ctypes.CDLL('./libfastmetrics.so')
@@ -145,13 +147,15 @@ class ClusterOrchestration():
     def rebalance_weights(self, weights):
         # Transform normalize weight to 256 base for HAProxy
         weights = [int(w * 256) for w in weights]
-        
-        for i in range(self.n_max):
 
+        for i in range(self.n_max):
             if i <= self.last_active_container_idx:
-                final_weight = weights[i]
+                # Active nodes must have weight >= 1 so HAProxy routes traffic to them
+                # and their status reads as 1.0. Mirrors simulated env behaviour where
+                # active containers stay "on" independently of routing weight.
+                final_weight = max(1, weights[i])
             else:
-                final_weight = 0.0
+                final_weight = 0
 
             command = f"set weight servidores_web/{self.node_name}_{i} {final_weight}"
             self.send_haproxy_command(command)        
@@ -178,6 +182,25 @@ class ClusterOrchestration():
         
         return container_metrics
     
+    def get_workload_norm(self) -> float:
+        """
+        Lee el request rate actual teh HAProxy frontend stats y lo normaliza.
+        req_rate = requests/sec
+        """
+        try:
+            csv_data = self.send_haproxy_command("show stat")
+            if csv_data.startswith("# "):
+                csv_data = csv_data[2:]
+            import csv, io
+            reader = csv.DictReader(io.StringIO(csv_data))
+            for row in reader:
+                # Frontend row: pxname="http_in", svname="FRONTEND"
+                if row.get("pxname") == "http_in" and row.get("svname") == "FRONTEND":
+                    req_rate = float(row.get("req_rate") or 0.0)
+                    return min(1.0, req_rate / self.max_req_rate)
+        except Exception as e:
+            print(f"Error reading workload from HAProxy: {e}")
+        return 0.0
 
     def _fetch_single_container_metrics(self, i: int, haproxy_stats_dict: dict):
         """Método worker que se ejecutará en paralelo para cada contenedor"""
@@ -300,14 +323,20 @@ class ClusterOrchestration():
         with open("haproxy.cfg", "w") as f:
             f.writelines(new_lines)
 
-    def send_haproxy_command(self, command:str):
+    def send_haproxy_command(self, command: str) -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect(("127.0.0.1", 9999))
-            command = command + " \n"
-            s.sendall(command.encode("utf-8"))
-            res = s.recv(8192).decode("utf-8")
-
-            return res
+            s.sendall((command + " \n").encode("utf-8"))
+            # Read the full response before closing the socket.
+            # A single recv(8192) can truncate large responses (e.g. "show stat"
+            # with many backends) and leaves HAProxy mid-write, causing SIGPIPE/SIGABRT.
+            chunks = []
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8")
     
     def get_haproxy_stats(self) -> dict:
         csv_haproxy_res = self.send_haproxy_command("show stat")
