@@ -53,7 +53,7 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
             verbose=1,
             n_steps=1024,
             batch_size=256,
-            learning_rate=0.00119,
+            learning_rate=linear_schedule(0.00119),
             clip_range=0.3,
             vf_coef=0.75,
             gamma=0.878,
@@ -91,7 +91,7 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
-    model.learning_rate = 0.0001
+    model.learning_rate = linear_schedule(0.0001)
 
     metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2", file_name=file)
     logger_callback = StepLoggerCallback()
