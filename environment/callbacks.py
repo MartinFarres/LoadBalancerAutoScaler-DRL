@@ -106,3 +106,65 @@ class TrainingMetricsCallback(BaseCallback):
             self._append_to_csv()
         except Exception: 
             pass
+
+
+class WorkloadBehaviorCallback(BaseCallback):
+    """
+    Callback personalizado para registrar el comportamiento de workload por step,
+    incluyendo etapa del entrenamiento (early/middle/late).
+    """
+    def __init__(self, total_timesteps: int, save_dir: str = "./training_results", 
+                 file_name: str = "workload_behavior.csv", verbose: int = 0):
+        super().__init__(verbose)
+        self.total_timesteps = total_timesteps
+        self.save_dir = save_dir
+        self.csv_path = os.path.join(save_dir, file_name)
+        os.makedirs(save_dir, exist_ok=True)
+        self._init_csv()
+    
+    def _init_csv(self):
+        fieldnames = ['timestep', 'workload', 'active_containers', 'stage']
+        with open(self.csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+    
+    def _on_step(self):
+        """
+        Método llamado por SB3 en cada step. Registra los datos en el CSV.
+        Retorna True siempre para no detener el entrenamiento.
+        """
+        # Obtener información del step actual
+        infos = self.locals.get("infos", [{}])
+        if not infos:
+            return True
+        info = infos[0]
+        
+        # Extraer valores
+        timestep = self.num_timesteps
+        workload = info.get('workload', 0.0)
+        active_containers = info.get('activos', 0)
+        
+        # Calcular etapa del entrenamiento
+        if self.total_timesteps <= 0:
+            stage = "early"
+        else:
+            progress = timestep / self.total_timesteps
+            if progress < 0.33:
+                stage = "early"
+            elif progress < 0.66:
+                stage = "middle"
+            else:
+                stage = "late"
+        
+        # Escribir fila en CSV
+        fieldnames = ['timestep', 'workload', 'active_containers', 'stage']
+        with open(self.csv_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writerow({
+                'timestep': timestep,
+                'workload': float(workload),
+                'active_containers': int(active_containers),
+                'stage': stage
+            })
+        
+        return True

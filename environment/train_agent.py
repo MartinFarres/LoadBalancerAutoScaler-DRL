@@ -2,7 +2,7 @@ import argparse
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from environment import LoadBalancerEnv
-from callbacks import TrainingMetricsCallback
+from callbacks import TrainingMetricsCallback, WorkloadBehaviorCallback
 from visualizer import Visualizer
 import sys
 from typing import Callable
@@ -63,11 +63,17 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
             target_kl=0.017,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
-            device=device)
+            device='cpu')
 
     metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1", file_name=file)
+    
+    workload_callback = WorkloadBehaviorCallback(
+        total_timesteps=iterations,
+        save_dir="./training_results/phase1",
+        file_name="workload_behavior.csv"
+    )
 
-    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=metrics_callback) 
+    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=[metrics_callback, workload_callback]) 
 
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
@@ -75,6 +81,13 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
     print("Generando curva de aprendizaje para Fase 1...")
     viz = Visualizer(save_dir="./resultados_graficos/phase1")
     viz.plot_learning_curve(f"./training_results/phase1/{file}")
+    
+    print("Generando gráficos de comportamiento de workload para Fase 1...")
+    viz.plot_workload_behavior(
+        csv_path="./training_results/phase1/workload_behavior.csv",
+        n_max=nodes,
+        phase="sim"
+    )
 
 
 def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.csv"):
@@ -100,9 +113,14 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
         save_path='./logs_checkpoints/',
         name_prefix='ppo_real_env'       
     )
+    workload_callback_real = WorkloadBehaviorCallback(
+        total_timesteps=iterations,
+        save_dir="./training_results/phase2",
+        file_name="workload_behavior.csv"
+    )
 
 
-    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback])
+    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback, workload_callback_real])
 
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada.\n")
@@ -110,6 +128,13 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     print("Generando curva de aprendizaje para Fase 2...")
     viz = Visualizer(save_dir="./resultados_graficos/phase2")
     viz.plot_learning_curve(f"./training_results/phase2/{file}")
+    
+    print("Generando gráficos de comportamiento de workload para Fase 2...")
+    viz.plot_workload_behavior(
+        csv_path="./training_results/phase2/workload_behavior.csv",
+        n_max=nodes,
+        phase="real"
+    )
 
 def run_wandb_sweep(nodes=5, iterations=100000):
     print("Iniciando W&B Sweep para optimización de hiperparámetros...")

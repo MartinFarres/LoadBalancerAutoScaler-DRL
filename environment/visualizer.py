@@ -93,3 +93,74 @@ class Visualizer:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f"Tabla de resumen guardada en: {save_path}")
+
+    def plot_workload_behavior(self, csv_path: str, n_max: int, phase: str = "sim"):
+        """
+        Genera 3 gráficos independientes (uno por etapa: early, middle, late)
+        comparando la carga de trabajo (workload) vs la respuesta del agente
+        (contenedores activos normalizados).
+        """
+        try:
+            df = pd.read_csv(csv_path)
+            if df.empty:
+                print("No hay datos para graficar workload behavior.")
+                return
+        except Exception as e:
+            print(f"Error leyendo CSV para workload behavior: {e}")
+            return
+
+        # Paso 2: Normalizar active_containers a escala 0-1
+        df['active_norm'] = df['active_containers'] / n_max
+
+        # Paso 3: Iterar sobre las tres etapas
+        for stage in ["early", "middle", "late"]:
+            subset = df[df['stage'] == stage]
+            if subset.empty:
+                print(f"No hay datos para la etapa '{stage}' en {csv_path}")
+                continue
+
+            # Paso 4: Seleccionar ventana representativa de 600 steps
+            center = len(subset) // 2
+            start = max(0, center - 300)
+            end = min(len(subset), center + 300)
+            window = subset.iloc[start:end]
+
+            if window.empty:
+                continue
+
+            timesteps = window['timestep'].values
+            workload = window['workload'].values
+            active_norm = window['active_norm'].values
+
+            # Paso 5: Aplicar media móvil (ventana 15)
+            window_size = 15
+            if len(workload) >= window_size:
+                ma_workload = np.convolve(workload, np.ones(window_size)/window_size, mode='valid')
+                ma_active = np.convolve(active_norm, np.ones(window_size)/window_size, mode='valid')
+                ma_timesteps = timesteps[window_size-1:]
+            else:
+                ma_workload = workload
+                ma_active = active_norm
+                ma_timesteps = timesteps
+
+            # Paso 6: Generar la figura
+            fig, ax = plt.subplots(figsize=(12, 5))
+
+            # Medias móviles (solo se grafican estas, sin datos crudos)
+            ax.plot(ma_timesteps, ma_workload, color='steelblue', linewidth=2, label='Workload')
+            ax.plot(ma_timesteps, ma_active, color='darkorange', linewidth=2, label='Contenedores Activos')
+
+            # Configuración
+            ax.set_xlabel('Timestep')
+            ax.set_ylabel('Valor Normalizado (0 - 1)')
+            ax.set_ylim(0, 1.1)
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.legend(loc='upper right')
+            ax.set_title(f"Comportamiento del Agente vs Workload — {stage.capitalize()} ({phase.upper()})")
+
+            # Paso 7: Guardar
+            save_path = os.path.join(self.save_dir, f"workload_behavior_{phase}_{stage}.png")
+            fig.tight_layout()
+            fig.savefig(save_path, dpi=300)
+            plt.close(fig)
+            print(f"Gráfico guardado en: {save_path}")
