@@ -9,6 +9,9 @@ from typing import Callable
 import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+#
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+#
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
@@ -42,7 +45,17 @@ MODEL_PATH = "ppo_lb_simulated_base"
 def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento en Simulacion Pura para {iterations} pasos con {nodes} nodos...")
     
-    env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
+    raw_env = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
+    vec_env = DummyVecEnv([lambda: raw_env])
+    
+    # Aplicamos VecNormalize al entorno vectorizado
+    env_sim = VecNormalize(
+        vec_env, 
+        norm_obs=True, 
+        norm_reward=True, 
+        clip_obs=10.0, 
+        clip_reward=10.0
+    )
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -53,14 +66,14 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
             verbose=1,
             n_steps=1024,
             batch_size=256,
-            learning_rate=linear_schedule(0.00119),
+            learning_rate=linear_schedule(0.0005), #0.00119),
             clip_range=0.3,
             vf_coef=0.75,
-            gamma=0.878,
+            gamma= 0.92, #0.878,
             ent_coef=0.0001,
             gae_lambda=0.976,
-            n_epochs=15,
-            target_kl=0.017,
+            n_epochs=10, #15,
+            target_kl= 0.03,#0.017,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
             device='cpu')
@@ -75,6 +88,7 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
 
     model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=[metrics_callback, workload_callback]) 
 
+    env_sim.save(f"./training_results/phase1/vec_normalize_phase1.pkl")
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
 
@@ -93,13 +107,23 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
 def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento con docker + HAProxy para {iterations} pasos con {nodes} nodos...")
     
-    env_real = Monitor(LoadBalancerEnv(simulated=False, n_max=nodes))
+    raw_env = Monitor(LoadBalancerEnv(simulated=False, n_max=nodes))
+    vec_env = DummyVecEnv([lambda: raw_env])
+    
+    # Cargamos la normalización aprendida en la Fase 1
+    if os.path.exists("./training_results/phase1/vec_normalize_phase1.pkl"):
+        env_real = VecNormalize.load("./training_results/phase1/vec_normalize_phase1.pkl", vec_env)
+        # La mantenemos entrenando (actualizando promedios) porque la escala real puede variar ligeramente
+        env_real.training = True 
+        env_real.norm_reward = True
+    else:
+        env_real = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
     
     if not os.path.exists(f"{MODEL_PATH}.zip"):
         print("No se encontró el modelo base simulado.")
         return
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu' #'cuda' if torch.cuda.is_available() else 'cpu'
     
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs, device=device)
     
@@ -122,6 +146,7 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
 
     model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback, workload_callback_real])
 
+    env_real.save(f"./training_results/phase2/vec_normalize_phase2.pkl")
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada.\n")
 
