@@ -300,78 +300,87 @@ class LoadBalancerEnv(gym.Env):
 
     def reward_function(self, state, action, cant_active_containers):
 
-        total_reward = 0.0
+            total_reward = 0.0
 
-        W_LATENCY = 2.0      
-        W_ERRORS = 50.0      
-        W_COST = 1.0         
-        W_SATURATION = 1.0   
-        W_RAM_SATURATION = 1.0
-        W_OVERPROVISION = 2.0 # Penaliza nodos idle 
-        
-        if cant_active_containers == 0:
-            return -200.0
-
-        # Variables para acumular
-        avg_latency = 0.0
-        avg_errors = 0.0
-        avg_cpu = 0.0
-        avg_cpu_sat = 0.0
-        avg_ram_sat = 0.0
-        
-        for i in range(self.n_max):
-            idx_base = i * 6 
-            status = state[idx_base + 5] 
+            W_LATENCY = 2.0      
+            W_ERRORS = 50.0      
+            W_COST = 1.0         
+            W_SATURATION = 1.0   
+            W_RAM_SATURATION = 1.0
+            W_OVERPROVISION = 2.0 # Penaliza nodos idle 
             
-            if status == 1.0:
-                cpu_pct = state[idx_base]
-                ram_pct = state[idx_base + 1]
-                latency = state[idx_base + 3]
-                errores = state[idx_base + 4]
+            # Nuevos pesos para control de estabilidad
+            W_SATURATION_PREVENTIVE = 2.0 
+            W_SCALE_FRICTION = 2.0 # Fricción para evitar el chattering (serrucho)
+            
+            if cant_active_containers == 0:
+                return -200.0
 
-                avg_latency += latency
-                avg_errors += errores
-                avg_cpu += cpu_pct
+            # Variables para acumular
+            avg_latency = 0.0
+            avg_errors = 0.0
+            avg_cpu = 0.0
+            avg_cpu_sat = 0.0
+            avg_ram_sat = 0.0
+            
+            for i in range(self.n_max):
+                idx_base = i * 6 
+                status = state[idx_base + 5] 
                 
-                if cpu_pct > 0.80:
-                    avg_cpu_sat += (cpu_pct - 0.80)
-                if ram_pct > 0.85:
-                    avg_ram_sat += (ram_pct - 0.85)
+                if status == 1.0:
+                    cpu_pct = state[idx_base]
+                    ram_pct = state[idx_base + 1]
+                    latency = state[idx_base + 3]
+                    errores = state[idx_base + 4]
+
+                    avg_latency += latency
+                    avg_errors += errores
+                    avg_cpu += cpu_pct
                     
-        # PROMEDIAMOS las métricas de los nodos encendidos
-        avg_latency /= cant_active_containers
-        avg_errors /= cant_active_containers
-        avg_cpu /= cant_active_containers
-        avg_cpu_sat /= cant_active_containers
-        avg_ram_sat /= cant_active_containers
-        
-        # Calculo de penalizaciones
-        
-        # Tope de Latencia (SLA Cap)
-        # Asumiendo que <= 0.1-200ms es una buena latencia
-        if avg_latency <= 0.1:
-            latency_penalty = 0.0
-        else:
-            # Si la supera, se penaliza al cuadrado.
-            latency_penalty = W_LATENCY * (avg_latency ** 2) 
+                    if cpu_pct > 0.80:
+                        avg_cpu_sat += (cpu_pct - 0.80)
+                    if ram_pct > 0.85:
+                        avg_ram_sat += (ram_pct - 0.85)
+                        
+            # PROMEDIAMOS las métricas de los nodos encendidos
+            avg_latency /= cant_active_containers
+            avg_errors /= cant_active_containers
+            avg_cpu /= cant_active_containers
+            avg_cpu_sat /= cant_active_containers
+            avg_ram_sat /= cant_active_containers
             
-        error_penalty = W_ERRORS * avg_errors 
-        cost_penalty = W_COST * (cant_active_containers / self.n_max)
-        saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
-        
-        # Castigo por CPU ocioso
-        # Si el cluster está usando menos del 40% de CPU promedio, sobran nodos.
-        CPU_TARGET_MIN = 0.40
-        if avg_cpu < CPU_TARGET_MIN:
-            # Mientras mas lejos del 40% y mas nodos hay, mayor el castigo
-            overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
-        else:
-            overprovision_penalty = 0.0
+            # Calculo de penalizaciones
+            
+            # Tope de Latencia (SLA Cap)
+            if avg_latency <= 0.1:
+                latency_penalty = 0.0
+            else:
+                latency_penalty = W_LATENCY * (avg_latency ** 2) 
+                
+            error_penalty = W_ERRORS * avg_errors 
+            cost_penalty = W_COST * (cant_active_containers / self.n_max)
+            saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
+            
+            # Zona muerta de cpu. Si el cpu promedio está entre 40% y 75%, no hay penalización extra por overprovision.
+            # Agrego un poco de heuristica humana para acelerar la convergencia del agente 
+            CPU_TARGET_MIN = 0.40
+            CPU_TARGET_MAX = 0.75  # Frontera superior segura
+            
+            if avg_cpu < CPU_TARGET_MIN:
+                # Castigo por tener contenedores ociosos
+                overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
+            elif avg_cpu > CPU_TARGET_MAX:
+                # Castigo suave preventivo por acercarse al límite antes del colapso
+                overprovision_penalty = W_SATURATION_PREVENTIVE * (avg_cpu - CPU_TARGET_MAX)
+            else:
+                overprovision_penalty = 0.0
 
-        total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
-        # Evitar bucle de prendido y apagado
-        scale_decision = action[-1]
-        if scale_decision <= 0.3 or scale_decision >= 0.7:
-            total_reward -= 0.05
+            total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
+            
+            # Penalización por escalar demasiado frecuentemente (chattering)
+            scale_decision = action[-1]
+            if scale_decision <= 0.3 or scale_decision >= 0.7:
+                # Castigamos la acción de escalar para forzar la inercia
+                total_reward -= W_SCALE_FRICTION
 
-        return float(total_reward)
+            return float(total_reward)
