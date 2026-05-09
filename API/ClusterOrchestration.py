@@ -39,6 +39,9 @@ class ClusterOrchestration():
         # CPU dic for cpu_usg calculation
         self.last_cpu_stats = {} # (cpu_ns, timestamp_ns)
 
+        # CPU Limit -> half per core
+        self.cpu_limit_per_container = 500_000_000 / 1_000_000_000
+
         self.start()
 
     def _get_or_pull(self, image_name: str):
@@ -267,13 +270,9 @@ class ClusterOrchestration():
                 delta_time = current_time_ns - last_time_ns
                 
                 # Calculamos el uso
-                # (delta_cpu / delta_tiempo_real) equivale a
-                # (delta_cpu / delta_system) * count_cores. Nos da el uso por core.
-                # 1.0 significa 100% de 1 core.
-                if delta_time > 0 and last_cpu_ns > 0:
-                    metric_obj.cpu_usg = delta_cpu / delta_time
-                else:
-                    metric_obj.cpu_usg = 0.0
+                raw_usage = delta_cpu / delta_time
+                # Obtenemos el uso normalizado con el limite de cpu establecido
+                metric_obj.cpu_usg = min(1.0, raw_usage / self.cpu_limit_per_container) 
                 
                 self.last_cpu_stats[long_id] = {
                     "cpu_usage_ns": current_cpu_ns,

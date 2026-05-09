@@ -1,2 +1,1 @@
-- chequear funcionamiento de ClusterOrchestration.py. las metricas que libc toma, muestra el uso del cpu fisico del hardware correspondiente, que fue limitado manualmente. La metrica de uso no se normaliza correctamente por lo que el limite matematico que muestra es de 0.5 cuando en realidad deberia mostrar 1.0 
 - hacer mas agresivo a locust
