@@ -154,7 +154,8 @@ Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO
 
 **Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo.
 
-$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
+$$\text{cpu}_{\text{usg}} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
+
 Donde:
 
 - $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
@@ -166,7 +167,7 @@ Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcent
 
 **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada contenedor respecto al límite configurado, normalizado en $[0, 1]$.
 
-$$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
+$$\text{ram}_{\text{usg}}^{\text{pct}} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
 
 Donde:
 
@@ -234,7 +235,7 @@ La función de recompensa constituye el mecanismo central que guía el aprendiza
 Como caso especial, si el número de contenedores activos es cero, la función retorna inmediatamente R=−200, asegurando que el agente nunca aprenda a vaciar el cluster independientemente de las otras señales.
 Para el resto de los casos, la función agrega cuatro componentes de penalización calculados sobre los valores promedios de los contenedores activos:
 
-$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu\_sat}} + \overline{\text{ram\_sat}}\right) \right] - \delta$$
+$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) \right] - \delta$$
 
 Los componentes se organizan en dos grupos según el impacto sobre la experiencia del usuario. La latencia y los errores HTTP constituyen las métricas orientadas al usuario (_user-facing_), para la cuales su degradación es perceptible directamente por el cliente y por tanto reciben las penalizaciones más severas. El costo operativo y la saturación de recursos son métricas orientadas al operador (_operator-facing_), y su impacto es interno al sistema y el usuario no los percibe, por lo que actúan como señales de fondo con peso unitario.
 
