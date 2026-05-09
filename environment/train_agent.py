@@ -9,9 +9,7 @@ from typing import Callable
 import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
-#
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-#
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
@@ -204,7 +202,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
         model = PPO("MlpPolicy", 
                     env_sim, 
                     verbose=0, 
-                    learning_rate=config.learning_rate,
+                    learning_rate=linear_schedule(config.learning_rate),
                     gamma=config.gamma,
                     n_steps=config.n_steps,
                     batch_size=config.batch_size,
