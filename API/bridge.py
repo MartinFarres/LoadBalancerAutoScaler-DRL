@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from ClusterOrchestration import ClusterOrchestration
-from schemas import AgentAction, ContainerMetrics
+from schemas import AgentAction, ContainerMetrics, ClusterMetrics
 
 app = FastAPI()
 clusterOrchestration = ClusterOrchestration()
@@ -28,9 +28,16 @@ def post_action(action:AgentAction):
     return {"status": "success", "received": action}
 
 @app.get("/metrics")
-def get_metrics() -> list[ContainerMetrics]:
-    metrics = clusterOrchestration.get_metrics()
-    return  metrics
+def get_metrics() -> ClusterMetrics:
+    nodes = clusterOrchestration.get_metrics()
+    workload_norm = clusterOrchestration.get_workload_norm()
+    return ClusterMetrics(nodes=nodes, workload_norm=workload_norm)
+
+@app.post("/workload")
+def post_workload(user_count: int, total_users: int = 4000):
+    """Called by Locust tick() to report current user count."""
+    clusterOrchestration.last_workload_norm = min(1.0, user_count / total_users)
+    return {"status": "ok"}
 
 @app.get("/reset")
 def reset():

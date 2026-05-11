@@ -1,1 +1,1 @@
-- Agregar mas funciones de workload (ej: funciones con tendencia, funciones con estacionalidad)
+- hacer mas agresivo a locust

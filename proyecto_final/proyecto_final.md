@@ -43,14 +43,13 @@ En el contexto del presente trabajo, estos componentes se instancian de la sigui
 
 El **agente** constituye la entidad lógica responsable de observar el estado del sistema y seleccionar las acciones de escalado a ejecutar. Su dominio de actuación es el **entorno (environment)**, conformado por el cluster de contenedores y la infraestructura Docker sobre la que operan los servicios.
 
-Para tomar decisiones, el agente percibe el **estado ($S$)** del entorno, una representación cuantitativa de la situación actual del sistema, compuesta por métricas como el porcentaje de uso de CPU y memoria reportadas por la API de Docker. A partir de dicha representacion, selecciona una de las **acciones ($A$)** disponibles: Incrementar el numero de réplicas, reducirlo  o mantener la configuracion actual.
+Para tomar decisiones, el agente percibe el **estado ($S$)** del entorno, una representación cuantitativa de la situación actual del sistema, compuesta por métricas como el porcentaje de uso de CPU y memoria reportadas por la API de Docker. A partir de dicha representacion, selecciona una de las **acciones ($A$)** disponibles: Incrementar el numero de réplicas, reducirlo, mantener la configuracion actual o balancear la carga entre los nodos activos.
 
-Tras ejecutar cada  acción, el agente recibe una **recompensa ($R$)** que retroalimenta al agente. Un valor positivo indica una gestión eficiente de los recursos, uno negativo refleja condiciones indeseables como la saturación del servicio o la subutilización del hardware. Este mecanismo de retroalimentación es el que permite al agente ajustar su comportamiento sin requerir ejemplos supervisados (Sutton & Barto, 2018).
+Tras ejecutar cada acción, el agente recibe una **recompensa ($R$)** que retroalimenta al agente. Un valor negativo pero cercano a cero indica una gestión eficiente de los recursos mientras que, un valor lejano a cero refleja condiciones indeseables como la saturación del servicio o la subutilización del hardware. Este mecanismo de retroalimentación es el que permite al agente ajustar su comportamiento sin requerir ejemplos supervisados (Sutton & Barto, 2018).
 
 El nucleo de nuestro agente es su **política ($\pi$)**, ésta representa la estrategia o "mapeo" que el agente sigue para determinar qué acción tomar ante un estado determinado. El objetivo del entrenamiento es encontrar una política óptima ($\pi^*$) que maximice la recompensa acumulada esperada bajo cualquier escenario de carga, garantizando así la estabilidad del cluster (Russell & Norvig, 2010).
 
 Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, se recurre a algoritmos avanzados como Q-Learning, Deep Q-Network (DQN) y Proximal Policy Optimization (PPO).
-
 
 ### Proximal Policy Optimization (PPO)
 
@@ -69,6 +68,8 @@ $$r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$$
 En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que limita el valor de $r_t(\theta)$ dentro de un rango determinado. Este proceso asegura que las actualizaciones sean pequeñas y controladas, manteniendo la nueva política "cerca" de la anterior, garantizando una convergencia más estable y robusta.
 
 ### Justificacion
+
+#### Nota: Mejorar la redaccion, haciendo uso de parrafos corto y claros. Minimizar el uso de listas
 
 Para este proyecto se ha decidido utilizar el algoritmo PPO:
 
@@ -120,7 +121,7 @@ Esto simuló el desbordamiento del búfer (Queue overflow), manteniendo una tasa
 
 #### Simulación del Consumo de Memoria RAM (Ley de Little)
 
-En los servidores de aplicaciones web modernos, el consumo de memoria volátil (RAM) presenta un comportamiento mixto: un piso de memoria estática requerido por el entorno de ejecución y un consumo dinámico proporcional a la cantidad de conexiones activas que el contenedor debe mantener. s
+En los servidores de aplicaciones web modernos, el consumo de memoria volátil (RAM) presenta un comportamiento mixto: un piso de memoria estática requerido por el entorno de ejecución y un consumo dinámico proporcional a la cantidad de conexiones activas que el contenedor debe mantener.
 
 Para modelar el consumo dinámico en el entorno simulado, se utilizó la **Ley de Little** ($L = \lambda W$), un teorema fundamental de la teoría de colas que establece que el número promedio de elementos en un sistema estable ($L$) es igual a la tasa promedio de llegada ($\lambda$) multiplicada por el tiempo promedio que un elemento pasa en el sistema ($W$). Simplificando la ecuación para el modelo M/M/1 implementado en el entorno, el número de peticiones concurrentes en la memoria del servidor se modeló como:
 
@@ -144,60 +145,57 @@ Esta integración permite que el agente PPO aprenda que un aumento en la utiliza
 
 # Diseño Experimental
 
-Se deberá presentar una sección en donde se describa todo el proceso realizado para poner a prueba el o los algoritmos utilizados. Esto deberá incluir primeramente:
-
-- Las métricas consideradas a fin de establecer el alcance y rendimiento del algoritmo sobre el problema dado.
-- Las herramientas utilizadas para la implementación como así también para medir el rendimiento del algoritmo (frameworks, simuladores, etc.).
 - En aquellos casos en donde resulte adecuado, se deberá indicar todo el proceso realizado para la obtención y adecuación del conjunto de datos.
 - Un detalle y justificación de los experimentos realizados a fin de determinar los resultados. Este deberá incluir tablas y/o gráficos que resuman los resultados.
-
-Evitar incluir en esta sección código fuente. Este se puede incluir como un apéndice al final del documento. Si es posible, incluir pequeños fragmentos de pseudo-código de ser necesario.
 
 ## Métricas de Desempeño
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
-**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo. 
+**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo.
 
-$$\text{cpu\_usg} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
- Donde:
+$$\text{cpu}_{\text{usg}} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
+
+Donde:
+
 - $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
 - $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
-- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado 
-para representar la variabilidad natural del sistema
-
+- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado
+  para representar la variabilidad natural del sistema
 
 Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
 
 **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada contenedor respecto al límite configurado, normalizado en $[0, 1]$.
 
-$$\text{ram\_usg\_pct} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
+$$\text{ram}_{\text{usg}}^{\text{pct}} = \frac{\text{RAM}_{usada}}{\text{RAM}_{límite}}$$
 
 Donde:
-- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
-- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor 
-$(1024 \times 1024 \times 1024 \text{ bytes})$
 
-En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. 
-En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco 
-Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima 
-el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican 
-riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para 
+- $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
+- $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor
+  $(1024 \times 1024 \times 1024 \text{ bytes})$
+
+En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker.
+En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco
+Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima
+el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican
+riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para
 evitar la caída del servicio.
 
-**Latencia (latency):**  Representa el tiempo de respuesta promedio de las 
-peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout 
+**Latencia (latency):** Representa el tiempo de respuesta promedio de las
+peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout
 máximo de 2000 ms.
 
 $$\text{latency} = \frac{t_{\text{respuesta}}}{t_{\text{timeout}}}$$
 
 Donde:
+
 - $t_{\text{respuesta}}$ = tiempo de respuesta observado (ms)
 - $t_{\text{timeout}}$ = límite máximo configurado de 2000 ms
 
-En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de 
-las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de 
-colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado 
+En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de
+las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de
+colas descrito en el Marco Teórico. En ambos casos el resultado queda normalizado
 en $[0, 1]$.
 
 **Ratio de Errores (error_rate):** Porcentaje de respuestas fallidas (ej. HTTP 5xx), que indica si el cluster está sobrepasado. En el entorno real, se extrae directamente de las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de saturación descrito en el Marco Teórico, permaneciendo en $0$ para valores de utilización $\rho < 0.9$ y creciendo hacia $1$ a medida que el nodo supera su capacidad. Se encuentra normalizado en $[0, 1]$.
@@ -212,11 +210,11 @@ En el entorno real, el valor se determina a partir del peso asignado por _HAProx
 
 La implementación del sistema integra herramientas encargadas tanto de la gestión de la infraestructura de contenedores, el entrenamiento del agente mediante aprendizaje por refuerzo, y la validación del comportamiento bajo condiciones de carga representativas.
 
-Para el desarrollo e implementación del sistema se utilizó **Python** como lenguaje principal. La contenerización de los servicios backend y la gestión del cluster fueron realizadas mediante **Docker**, administrado programáticamente a través de su SDK oficial, junto a **HAProxy 3.0** como balanceador de carga. 
+Para el desarrollo e implementación del sistema se utilizó **Python** como lenguaje principal. La contenerización de los servicios backend y la gestión del cluster fueron realizadas mediante **Docker**, administrado programáticamente a través de su SDK oficial, junto a **HAProxy 3.0** como balanceador de carga.
 
 La interfaz entre el agente y la infraestructura fue definida utilizando **Gymnasium**, con el tipo `spaces.Box` es posible abstraer el cluster como un entorno de RL compatible con bibliotecas de entrenamiento. El entrenamiento del agente PPO se implementó sobre **Stable-Baselines3**, seleccionado para proveer una implementación optimizada y validada del algoritmo sobre **PyTorch**.
 
- La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
+La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
 
 ## Proceso de entrenamiento
 
@@ -230,11 +228,139 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 
 - _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
+## Diseño de la funcion de recompensa
+
+La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en la señal que se utiliza para indicar cuando escalar y que penaliza los comportamientos indeseables [1]. Se optó por una función de penalización pura, es decir sin términos positivos, de forma que el agente aprenda a minimizar el daño.
+
+Como caso especial, si el número de contenedores activos es cero, la función retorna inmediatamente R=−200, asegurando que el agente nunca aprenda a vaciar el cluster independientemente de las otras señales.
+Para el resto de los casos, la función agrega cuatro componentes de penalización calculados sobre los valores promedios de los contenedores activos:
+
+$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) \right] - \delta$$
+
+Los componentes se organizan en dos grupos según el impacto sobre la experiencia del usuario. La latencia y los errores HTTP constituyen las métricas orientadas al usuario (_user-facing_), para la cuales su degradación es perceptible directamente por el cliente y por tanto reciben las penalizaciones más severas. El costo operativo y la saturación de recursos son métricas orientadas al operador (_operator-facing_), y su impacto es interno al sistema y el usuario no los percibe, por lo que actúan como señales de fondo con peso unitario.
+
+Los errores HTTP reciben la penalización más elevada ($W_{err} = 50.0$) dado que una respuesta fallida representa una degradación crítica del
+servicio. La latencia se penaliza con $W_{lat} = 2.0$ aplicado cuadráticamente, haciendo al agente progresivamente más sensible a los picos. El costo operativo y la saturación de recursos comparten peso unitario ($W_{cost} = W_{sat} = 1.0$), desincentivando el sobreaprovisionamiento y el uso excesivo de recursos sin competir con las penalizaciones de calidad de servicio.
+
+Finalmente, el término $\delta$ penaliza las decisiones de scaling en los extremos del espacio
+de acción:
+
+$$\delta = \begin{cases} 0.05 & \text{si } a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7 \\ 0 & \text{en otro caso} \end{cases}$$
+
+Su propósito es desincentivar el comportamiento oscilante de escalar y desescalar continuamente sin evidencia suficiente, favoreciendo decisiones moderadas cuando el estado del cluster no lo justifica.
+
+## Infraestructura de Telemetría y Monitoreo
+
+### Arquitectura General del Sistema
+
+El sistema se organiza en cuatro capas que operan de forma coordinada durante el entrenamiento y la evaluación del agente. Cada capa tiene una responsabilidad bien delimitada, y la comunicación entre ellas se realiza a través de interfaces explícitas que permiten reemplazar o extender cualquier componente sin afectar al resto.
+
+![infraestructura&telemetria](./resources/infraestructura.png)
+
+**Plano de Control — El Agente PPO**
+
+El agente PPO es el componente central del sistema. En cada paso del entorno, recibe un vector de observación que describe el estado del cluster, selecciona una acción compuesta por los pesos de ruteo para cada nodo y una decisión de escalado, y la envía al Bridge a través de una petición HTTP POST al endpoint `/action`. Una vez aplicada la acción, consulta el estado actualizado del cluster mediante GET a `/metrics`, calcula la recompensa y actualiza su política.
+
+**Bridge — FastAPI como Middleware**
+
+El Bridge, implementado en `bridge.py` sobre FastAPI, actúa como la capa de traducción entre el lenguaje del agente (vectores de números normalizados) y el lenguaje de la infraestructura (comandos de Docker y HAProxy). Expone cinco endpoints:
+
+| Endpoint   | Método | Función                                               |
+| ---------- | ------ | ----------------------------------------------------- |
+| `/init`    | POST   | Inicializa el cluster: levanta contenedores y HAProxy |
+| `/action`  | POST   | Recibe pesos y decisión de escala, los aplica         |
+| `/metrics` | GET    | Devuelve métricas de todos los nodos + workload       |
+| `/reset`   | GET    | Restablece el cluster al estado inicial               |
+| `/cleanup` | GET    | Detiene y elimina todos los contenedores              |
+
+Esta separación en una API REST independiente tiene una ventaja práctica concreta: el agente puede entrenarse en cualquier máquina de la red apuntando a la URL del Bridge, sin necesidad de tener Docker instalado localmente ni acceso directo a los cgroups del host.
+
+**Cluster de Contenedores — Docker + HAProxy**
+
+El cluster está formado por `n_max` instancias del servidor `dummy_server`, una aplicación Flask servida con Gunicorn que expone tres endpoints diseñados para generar carga controlada: `/` (respuesta trivial), `/cpu` (cálculo intensivo) y `/ram` (acumulación progresiva de memoria). Gunicorn se configura con dos workers por contenedor para aprovechar múltiples cores y producir curvas de saturación de CPU realistas, ya que el servidor de desarrollo de Flask es monohilo y no generaría la variabilidad necesaria para el entrenamiento.
+
+Todos los contenedores se conectan a una red virtual Docker dedicada (`lbas_network`), sobre la que HAProxy opera como punto de entrada único. Su configuración se genera programáticamente al inicio del cluster a través de `init_haproxy_cfg()`, que escribe el archivo `haproxy.cfg` con un servidor por contenedor. Los pesos de ruteo se modifican en caliente durante el entrenamiento mediante la Runtime API de HAProxy, sin necesidad de recargar el proceso.
+
+Cada contenedor se le ha asignado un límite explícito de `500_000_000` nano-CPUs (equivalente a 0.5 cores), lo que garantiza que la competencia por recursos entre nodos sea observable y medible, forzando al agente a aprender cuándo el cluster necesita más capacidad.
+
+**Generador de Tráfico — Locust**
+
+Locust genera el tráfico HTTP que estresa el cluster durante la fase de entrenamiento real. El generador de carga implementa la clase `StressGenerator`, que hereda de `LoadTestShape` y determina dinámicamente el número de usuarios activos en cada tick. Para garantizar que el agente aprenda a reaccionar ante patrones de tráfico variados y no se sobreajuste a un único patrón, el sistema delega la generación de carga al módulo `TrafficGenerator`, compartido entre el entorno simulado y Locust.
+
+`TrafficGenerator` implementa ocho funciones de carga distintas seleccionadas aleatoriamente, cada una con parámetros generados al inicio de cada ciclo: doble ola gaussiana, lineal, exponencial, escalones, tendencia, estacional, diente de sierra y spike con recuperación. Cada ciclo tiene una duración aleatoria de entre 2 y 15 minutos, y sobre cada valor calculado se aplica un jitter gaussiano del 5% y una probabilidad del 2% de generar un evento extremo (corte de tráfico o pico de demanda). Esto asegura que el espacio de estados que observa el agente durante el entrenamiento sea suficientemente rico y no determinista.
+
+El número de usuarios activos en cada momento se reporta al Bridge mediante un POST al endpoint `/workload`, que normaliza el valor y lo incluye en el vector de observación como una señal adicional de contexto. Esto le da al agente información anticipatoria sobre la carga actual antes de que sus efectos sean visibles en las métricas de CPU y latencia.
+
+---
+
+### Infraestructura de Telemetría
+
+La recolección de métricas en tiempo real constituye la columna vertebral del sistema, ya que la calidad de la señal de observación determina directamente la capacidad del agente para tomar decisiones correctas. Para satisfacer los requisitos de baja latencia y alta frecuencia de muestreo que impone el ciclo de entrenamiento del PPO, se diseñó una infraestructura de telemetría en tres capas, cada una especializada según el origen y la naturaleza del dato que expone.
+
+**Capa 1 — Métricas de Hardware vía cgroups (CPU y RAM)**
+
+Linux organiza los recursos asignados a cada contenedor Docker a través del subsistema _cgroups v2_, que expone en tiempo real el estado del hardware como archivos de texto en el sistema de ficheros virtual `/sys/fs/cgroup`. Este mecanismo elimina la necesidad de llamar al Docker Daemon para obtener métricas de bajo nivel, reduciendo la latencia de lectura a operaciones de I/O sobre memoria del kernel.
+
+El kernel acumula de forma continua el tiempo de procesador consumido por cada contenedor en el archivo `cpu.stat`, bajo la clave `usage_usec`. Dado que este valor es un contador monótonamente creciente, el uso real en el intervalo de muestreo se obtiene calculando el delta respecto a la lectura anterior y normalizándolo contra el límite de CPU configurado por contenedor:
+
+$$\text{cpu}_{\text{usg}}^{\text{norm}} = \min\left(1.0,\; \frac{\Delta\text{CPU}_{ns} / \Delta t_{ns}}{\text{cpu}_{\text{limit}}}\right)$$
+
+El sistema mantiene en memoria un diccionario `last_cpu_stats` indexado por el Long ID de cada contenedor, que persiste entre pasos del entorno y permite calcular el delta sin releer el historial completo. El consumo de RAM se lee del archivo `memory.current` y se normaliza contra el límite configurado en MB, resultando en una métrica directamente interpretable como riesgo de OOM.
+
+**Capa 2 — Métricas de Red vía Biblioteca C (`fast_metrics.c`)**
+
+Leer los contadores de red de un contenedor desde el proceso host presenta un obstáculo fundamental: cada contenedor opera dentro de su propio _network namespace_, donde la interfaz `eth0` no existe en el namespace del host. La solución implementada se basa en la llamada al sistema `setns()`, que permite a un proceso ingresar temporalmente al namespace de red de otro proceso. La biblioteca `libfastmetrics.so`, compilada desde `fast_metrics.c`, implementa esta lógica en C para minimizar la latencia:
+
+1. Se construye la ruta al pseudo-archivo del namespace: `/proc/<PID>/ns/net`
+2. Se abre el descriptor de archivo y se invoca `setns(fd, CLONE_NEWNET)`, haciendo que el hilo actual ingrese al namespace del contenedor
+3. Dentro de ese namespace, se lee `/sys/class/net/eth0/statistics/rx_bytes` directamente desde sysfs
+4. El descriptor se cierra inmediatamente para no impedir la liberación del namespace cuando el contenedor termine
+
+Este diseño sigue la recomendación de la documentación oficial de Docker para la recolección de métricas de alto rendimiento: en lugar de lanzar un nuevo proceso por cada lectura, se reutiliza el PID del contenedor, previamente cacheado al momento de la inicialización del cluster. [7]
+
+**Capa 3 — Métricas L7 vía HAProxy Stats Socket**
+
+Las métricas de capa de aplicación —latencia de respuesta HTTP y tasa de errores 5xx— son reportadas por HAProxy a través de su Runtime API, expuesta como un socket TCP en el puerto `9999`. Al enviar el comando `show stat`, HAProxy devuelve un CSV con el estado detallado de cada servidor backend. De esta respuesta se extraen, para cada nodo, la latencia promedio (`rtime`), el contador de errores HTTP 5xx (`hrsp_5xx`) y el peso de ruteo (`weight`), que determina el `status` binario del contenedor.
+
+El socket se instancia, utiliza y cierra en cada llamada de forma explícita. Mantener una conexión persistente sería problemático: HAProxy puede cerrar silenciosamente conexiones inactivas, lo que provocaría un _broken pipe_ en el siguiente paso del entorno. La lectura de la respuesta se realiza en un bucle hasta que el socket retorna un chunk vacío, garantizando que respuestas largas no se lean de forma truncada y corrompan el CSV.
+
+**Paralelización de la Recolección**
+
+Dado que el sistema gestiona `n_max` contenedores en paralelo, una recolección secuencial implicaría que el tiempo total de un paso del entorno crecería linealmente con el número de nodos. Para evitar este problema, la función `get_metrics()` lanza un `ThreadPoolExecutor` con tantos workers como contenedores activos, ejecutando en paralelo la recolección de cgroups y red para cada nodo. Los resultados se escriben en sus posiciones exactas dentro de la lista de salida a medida que cada hilo completa su trabajo, garantizando el orden correcto sin necesidad de sincronización adicional, mientras la recolección de métricas HAProxy se realiza una única vez antes de lanzar el pool y se pasa como argumento compartido a todos los workers.
+
 # Análisis y discusión de resultados
 
-En esta sección se deberá realizar un mínimo análisis sobre los resultados obtenidos.  
-El objetivo es tratar de razonar sobre las causas de los resultados obtenidos en la fase experimental a fin de proveer una posible justificación.  
-Aquí se incluyen posibles limitaciones en los algoritmos elegidos, en la simulación planteada, los datos, etc.
+## Resultados de la Optimización (Hiperparámetros)
+
+### Analisis de Importancia y Coorelacion
+
+(va imagen de correlacion entre las metricas y la recompensa)
+
+### Estudio de convergencia
+
+(va grafico de las lineas agrupadas)
+
+### Justificacion de la estabilidad
+
+(clip_range)
+
+### Justificacion de la seleccion de Hiperparametros
+
+(va grafico coordenadas paralelas)
+
+## Evaluación del escalamiento (Runs: 3,5,10,20 nodos)
+
+### Comportamiento del agente ante el aumento de la complejidad del entorno
+
+### Métricas de desempeño del cluster
+
+## Comparativa vs. baselines de la industria
+
+### vs. Umbrales clasicos (Static thresholds)
+
+### vs. Controlador PID
+
+### Resumen de resultados
 
 # Conclusiones finales
 
@@ -242,10 +368,10 @@ Observaciones finales sobre el tema y es muy importante indicar aquellas tareas 
 
 ## Bibliografía
 
-\[1] Sutton, R. S., & Barto, A. G. (2018). *Reinforcement Learning: An Introduction* 
+\[1] Sutton, R. S., & Barto, A. G. (2018). _Reinforcement Learning: An Introduction_
 (2nd ed.). The MIT Press.
 
-\[2] Russell, S., & Norvig, P. (2010). *Artificial Intelligence: A Modern Approach* 
+\[2] Russell, S., & Norvig, P. (2010). _Artificial Intelligence: A Modern Approach_
 (3rd ed.). Prentice Hall.
 
 \[3] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
@@ -255,3 +381,5 @@ Observaciones finales sobre el tema y es muy importante indicar aquellas tareas 
 \[5] Menascé, D. A., & Almeida, V. A. F. (2001). Capacity Planning for Web Services: Metrics, Models, and Methods. Prentice Hall.
 
 \[6] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
+
+\[7] https://docs.docker.com/engine/containers/runmetrics/#tips-for-high-performance-metric-collection

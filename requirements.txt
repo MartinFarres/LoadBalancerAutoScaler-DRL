@@ -11,3 +11,6 @@ Flask
 gunicorn
 uvicorn[standard]
 argparse
+wandb
+matplotlib
+pandas

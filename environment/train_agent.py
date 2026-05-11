@@ -2,13 +2,14 @@ import argparse
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 from environment import LoadBalancerEnv
-from callbacks import TrainingMetricsCallback
+from callbacks import TrainingMetricsCallback, WorkloadBehaviorCallback
 from visualizer import Visualizer
 import sys
 from typing import Callable
 import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
@@ -39,53 +40,93 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
 directory_logs = "./logs_tensorboard/"
 MODEL_PATH = "ppo_lb_simulated_base"
 
-def train_phase_1_simulation(nodes=5, iterations=50000, file="training_metrics.csv"):
+def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento en Simulacion Pura para {iterations} pasos con {nodes} nodos...")
     
-    env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
+    raw_env = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
+    vec_env = DummyVecEnv([lambda: raw_env])
+    
+    # Aplicamos VecNormalize al entorno vectorizado
+    env_sim = VecNormalize(
+        vec_env, 
+        norm_obs=True, 
+        norm_reward=True, 
+        clip_obs=10.0, 
+        clip_reward=10.0
+    )
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    model = PPO("MlpPolicy", 
-            env_sim, 
-            verbose=1, 
-            n_steps=2048,           # Ganador indiscutible en la grafica de lineas
-            batch_size=128,         # Buen equilibrio segun coordenadas paralelas
-            learning_rate=0.0003,   # Bajo, debido a la fuerte correlacion negativa
-            clip_range=0.3,         # El que mas rapido convergio
-            vf_coef=0.5,            # Vital: Evita el colapso mostrado en el scatter plot
-            gamma=0.95,             # Las lineas amarillas pasaban por este rango inferior
-            ent_coef=0.01,          # Irrelevante segun el scatter plot, se deja bajo
+    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: a616rj5a)
+    # reward=-149 vs. promedio de -715 en los otros 39 runs
+    model = PPO("MlpPolicy",
+            env_sim,
+            verbose=1,
+            n_steps=1024,
+            batch_size=256,
+            learning_rate=linear_schedule(0.0005), #0.00119),
+            clip_range=0.3,
+            vf_coef=0.75,
+            gamma= 0.92, #0.878,
+            ent_coef=0.0001,
+            gae_lambda=0.976,
+            n_epochs=10, #15,
+            target_kl= 0.03,#0.017,
+            normalize_advantage=True,
             tensorboard_log=directory_logs,
-            device=device)
+            device='cpu')
 
     metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1", file_name=file)
+    
+    workload_callback = WorkloadBehaviorCallback(
+        total_timesteps=iterations,
+        save_dir="./training_results/phase1",
+        file_name="workload_behavior.csv"
+    )
 
-    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=metrics_callback) 
+    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=[metrics_callback, workload_callback]) 
 
+    env_sim.save(f"./training_results/phase1/vec_normalize_phase1.pkl")
     model.save(MODEL_PATH)
     print("Fase 1 completada. Conocimiento base guardado.\n")
 
     print("Generando curva de aprendizaje para Fase 1...")
     viz = Visualizer(save_dir="./resultados_graficos/phase1")
     viz.plot_learning_curve(f"./training_results/phase1/{file}")
+    
+    print("Generando gráficos de comportamiento de workload para Fase 1...")
+    viz.plot_workload_behavior(
+        csv_path="./training_results/phase1/workload_behavior.csv",
+        n_max=nodes,
+        phase="sim"
+    )
 
 
 def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento con docker + HAProxy para {iterations} pasos con {nodes} nodos...")
     
-    env_real = Monitor(LoadBalancerEnv(simulated=False, n_max=nodes))
+    raw_env = Monitor(LoadBalancerEnv(simulated=False, n_max=nodes))
+    vec_env = DummyVecEnv([lambda: raw_env])
+    
+    # Cargamos la normalización aprendida en la Fase 1
+    if os.path.exists("./training_results/phase1/vec_normalize_phase1.pkl"):
+        env_real = VecNormalize.load("./training_results/phase1/vec_normalize_phase1.pkl", vec_env)
+        # La mantenemos entrenando (actualizando promedios) porque la escala real puede variar ligeramente
+        env_real.training = True 
+        env_real.norm_reward = True
+    else:
+        env_real = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
     
     if not os.path.exists(f"{MODEL_PATH}.zip"):
         print("No se encontró el modelo base simulado.")
         return
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu' #'cuda' if torch.cuda.is_available() else 'cpu'
     
     model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
-    model.learning_rate = 0.0001
+    model.learning_rate = linear_schedule(0.0001)
 
     metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2", file_name=file)
     logger_callback = StepLoggerCallback()
@@ -94,16 +135,29 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
         save_path='./logs_checkpoints/',
         name_prefix='ppo_real_env'       
     )
+    workload_callback_real = WorkloadBehaviorCallback(
+        total_timesteps=iterations,
+        save_dir="./training_results/phase2",
+        file_name="workload_behavior.csv"
+    )
 
 
-    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback])
+    model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback, workload_callback_real])
 
+    env_real.save(f"./training_results/phase2/vec_normalize_phase2.pkl")
     model.save("ppo_lb_production_ready")
     print("Fase 2 completada.\n")
 
     print("Generando curva de aprendizaje para Fase 2...")
     viz = Visualizer(save_dir="./resultados_graficos/phase2")
     viz.plot_learning_curve(f"./training_results/phase2/{file}")
+    
+    print("Generando gráficos de comportamiento de workload para Fase 2...")
+    viz.plot_workload_behavior(
+        csv_path="./training_results/phase2/workload_behavior.csv",
+        n_max=nodes,
+        phase="real"
+    )
 
 def run_wandb_sweep(nodes=5, iterations=100000):
     print("Iniciando W&B Sweep para optimización de hiperparámetros...")
@@ -148,7 +202,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
         model = PPO("MlpPolicy", 
                     env_sim, 
                     verbose=0, 
-                    learning_rate=config.learning_rate,
+                    learning_rate=linear_schedule(config.learning_rate),
                     gamma=config.gamma,
                     n_steps=config.n_steps,
                     batch_size=config.batch_size,
@@ -157,7 +211,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
                     ent_coef=config.ent_coef,
                     vf_coef=config.vf_coef,
                     gae_lambda=config.gae_lambda,
-                    target_kl=config.target_kl,
+                    # target_kl=config.target_kl,
                     normalize_advantage=config.normalize_advantage,
                     tensorboard_log=f"./logs_tensorboard/sweep_{run.id}",
                     device=device)
@@ -174,7 +228,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
 
     sweep_id = wandb.sweep(sweep_config, project="LoadBalancerAutoScaler-DRL")
     
-    wandb.agent(sweep_id, sweep_train, count=15)
+    wandb.agent(sweep_id, sweep_train, count=30)
 
 
 if __name__ == "__main__":

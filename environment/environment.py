@@ -4,6 +4,10 @@ import time
 from gymnasium import spaces
 import numpy as np
 import math
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.traffic_generator import TrafficGenerator
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -24,7 +28,7 @@ class LoadBalancerEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=0.0, 
             high=1.0, 
-            shape=(self.n_max * 6,), 
+            shape=(self.n_max * 6 + 1,), 
             dtype=np.float32
         )
         
@@ -36,16 +40,16 @@ class LoadBalancerEnv(gym.Env):
             dtype=np.float32
         )
         
-        self.actual_state = np.zeros(self.n_max * 6, dtype=np.float32)
-
-        # Variables exclusivas para el modo simulado
-        if self.simulated:
-            self.current_step = 0
-            self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
-            self.sim_active_containers[0] = True
+        self.actual_state = np.zeros(self.n_max * 6 + 1, dtype=np.float32)
 
         # Memoria para la Espera Dinamica
         self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+
+        # Variables exclusivas para el modo simulado
+        if self.simulated:
+            self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
+            self.sim_active_containers[0] = True
+            self.traffic_gen = TrafficGenerator()
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -147,37 +151,42 @@ class LoadBalancerEnv(gym.Env):
             "cpu_avg": float(cpu_t),
             "ram_avg": float(ram_t),
             "latency_avg": float(lat_t),
-            "error_avg": float(err_t)
+            "error_avg": float(err_t),
+            "workload": float(self.actual_state[-1]) #add workload info to log
         }
         
         return self.actual_state, reward, terminated, truncated, info
 
     def get_real_metrics(self):
         new_state = []
+        workload_norm = 0.0
         try:
             response = requests.get(f"{self.api_url}/metrics").json()
+
+            workload_norm = float(response.get("workload_norm", 0.0))
+            nodes = response.get("nodes", response)
             
             MAX_LATENCY_MS = 2000.0 # 2 segundos máximo
             
             for i in range(self.n_max):
                 
-                cpu_raw = response[i]["cpu_usg"]
+                cpu_raw = nodes[i]["cpu_usg"]
                 cpu_norm = min(1.0, max(0.0, cpu_raw))
                 
-                ram_raw = response[i]["ram_usg_pct"]
+                ram_raw = nodes[i]["ram_usg_pct"]
                 ram_norm = min(1.0, max(0.0, ram_raw))
                 
-                ram_tot_raw = response[i]["ram_total_normalize"]
+                ram_tot_raw = nodes[i]["ram_total_normalize"]
                 ram_tot_norm = min(1.0, max(0.0, ram_tot_raw))
                 
                 # Convertimos milisegundos a una escala 0.0 - 1.0
-                latency_raw = response[i]["latency"]
+                latency_raw = nodes[i]["latency"]
                 latency_norm = min(1.0, latency_raw / MAX_LATENCY_MS)
                 
-                error_raw = response[i]["error_rate"]
+                error_raw = nodes[i]["error_rate"]
                 error_norm = min(1.0, max(0.0, error_raw))
                 
-                status = float(response[i]["status"])
+                status = float(nodes[i]["status"])
                 
                 new_state.extend([cpu_norm, ram_norm, ram_tot_norm, latency_norm, error_norm, status])
                 
@@ -186,126 +195,15 @@ class LoadBalancerEnv(gym.Env):
             new_state = [0.0] * (self.n_max * 6)
             new_state[5] = 1.0 
             
+        # agregamos workload 
+        new_state.append(workload_norm)
+        
         return np.array(new_state, dtype=np.float32)
 
-
     def get_dynamic_simulated_workload(self):
-
-        # Inicializamos las variables de estado la primera vez
-        if not hasattr(self, 'sim_traffic_fn') or (self.current_step - self.sim_fn_start_step >= self.sim_fn_duration):
-            # Decidimos los tiempos limites y funciones a usar 
-            # 0: Double Wave
-            # 1: Lineal
-            # 2: Exponencial
-            # 3: Steps
-            self.sim_traffic_fn = np.random.randint(0, 4)
-            self.sim_fn_start_step = self.current_step
-            self.sim_fn_duration = np.random.randint(50, 200) # Duracion en steps
-            
-            self.sim_total_users = 450 
-            
-            # Se generan los valores necesarios para cada funcion
-            # Double wave
-            self.sim_peak_one = self.sim_total_users * np.random.uniform(0.2, 0.95)
-            self.sim_min = self.sim_total_users * np.random.uniform(0.05, 0.20)
-            self.sim_peak_two = self.sim_total_users * np.random.uniform(0.2, 0.95)
-            self.sim_shift_peak_one = np.random.uniform(0.1 , 0.4)
-            self.sim_shift_peak_two = np.random.uniform(0.6 , 0.9)
-            self.sim_width_peak_one = np.random.uniform(0.05, 0.2)
-            self.sim_width_peak_two = np.random.uniform(0.05, 0.2)
-            # Exponencial
-            self.sim_base = self.sim_total_users * np.random.uniform(0.02, 0.15)
-            # Lineal
-            self.sim_scale_rate = np.random.randint(1, 10)
-            self.sim_agresiveness_coeficient = np.random.uniform(0.7, 1.5) # de-formacion de las funciones para que no sean tan perfectas
-            # Step
-            self.sim_step_count= np.random.randint(3, 20)
-
-        relative_step = self.current_step - self.sim_fn_start_step
-        mid_step = self.sim_fn_duration / 2
-        workload = 10.0 # Valor por defecto
-
-        # Double Wave
-        if self.sim_traffic_fn == 0:
-            # e**(−(t−u/o​)**2)
-            # t -> relative_time
-            # u(centro) -> time_limit * shift_peak
-            # o(ancho) -> width
-            workload = (
-                (self.sim_peak_one - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_one) / 
-                                                                  (self.sim_fn_duration * self.sim_width_peak_one)) ** 2)
-                +
-                (self.sim_peak_two - self.sim_min) * math.e ** -(((relative_step  - self.sim_fn_duration * self.sim_shift_peak_two) / 
-                                                                  (self.sim_fn_duration * self.sim_width_peak_two)) ** 2)
-                + self.sim_min
-            )
-            
-        # Lineal
-        elif self.sim_traffic_fn == 1:
-            if relative_step <= mid_step:
-                 # Subida 
-                workload = self.sim_base + (self.sim_scale_rate * relative_step * self.sim_agresiveness_coeficient)
-            else:
-                # Bajada
-                peak = self.sim_base + (self.sim_scale_rate * mid_step * self.sim_agresiveness_coeficient)
-                time_down = relative_step - mid_step
-                workload = peak - (self.sim_scale_rate * time_down * self.sim_agresiveness_coeficient)
-
-        # Exponencial
-        elif self.sim_traffic_fn == 2:
-            peak_time = self.sim_fn_duration * 0.7
-            base_users = max(10, self.sim_base)
-            if relative_step <= peak_time:
-                 # Subida 
-                k = math.log(self.sim_total_users / base_users) / max(1, peak_time) * self.sim_agresiveness_coeficient
-                try: 
-                    workload = base_users * math.exp(k * relative_step)
-                except OverflowError:
-                    workload = self.sim_total_users
-            else:
-                # Bajada
-                time_down = relative_step - peak_time
-                drop_rate = (self.sim_total_users - base_users) / max(1, self.sim_fn_duration - peak_time) * self.sim_agresiveness_coeficient
-                workload = self.sim_total_users - (drop_rate * time_down)
-
-        # Steps 
-        elif self.sim_traffic_fn == 3:
-
-            # Calculamos dinamicamente el tamaño de los escalones
-            step_size = self.sim_fn_duration // self.sim_step_count # Ancho steps
-            users_per_step = (self.sim_total_users - self.sim_base) / (self.sim_step_count / 2) # Altura steps
-
-            if relative_step <= mid_step:
-                 # Subida 
-                current_step_idx = relative_step // step_size
-                workload = self.sim_base + (users_per_step * current_step_idx)
-
-            else:
-                # Bajada
-                peak_steps = mid_step // step_size
-                peak_users = self.sim_base + (users_per_step * peak_steps)
-                steps_down = (relative_step - mid_step) // step_size
-                workload = peak_users - (users_per_step * steps_down)
-
-        workload = max(10.0, workload)
-
-        # Ruido (Jitter)
-        # vibracion del 5%
-        standar_deviation = workload * 0.05
-        jitter = np.random.normal(0, standar_deviation) # campana de gauss para generar ruido. Vibramos alrededor del valor
-        workload += jitter
-
-        # Outlier (Evento Extremo)
-        # generacion random de probabilidad 2% para extremos
-        prob = np.random.randint(1, 101)
-        if prob <= 2:
-            workload = self.sim_base # simulamos un corte de red o algo que haga que disminuya drasticamente los usuarios
-        elif prob >= 99:
-            workload = self.sim_total_users # simulamos un pico (ddos, viral, etc)
-
-
-
-        return max(10, min(workload, self.sim_total_users))
+        # Obtenemos la carga pasándole el step actual de la simulación
+        workload = self.traffic_gen.get_workload(self.current_step)
+        return workload
 
     def get_simulated_metrics(self, action):
         total_workload = self.get_dynamic_simulated_workload()
@@ -395,63 +293,94 @@ class LoadBalancerEnv(gym.Env):
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
-
+        # At the end, before returning new_state:
+        workload_norm = np.float32(total_workload / self.traffic_gen.total_users)
+        new_state = np.append(new_state, workload_norm)
         return new_state
 
     def reward_function(self, state, action, cant_active_containers):
 
-        total_reward = 0.0
+            total_reward = 0.0
 
-        W_LATENCY = 2.0      
-        W_ERRORS = 50.0      
-        W_COST = 1.0         
-        W_SATURATION = 1.0   
-        W_RAM_SATURATION = 1.0 
-        
-        if cant_active_containers == 0:
-            return -200.0 
+            W_LATENCY = 2.0      
+            W_ERRORS = 50.0      
+            W_COST = 1.0         
+            W_SATURATION = 1.0   
+            W_RAM_SATURATION = 1.0
+            W_OVERPROVISION = 2.0 # Penaliza nodos idle 
             
-        # Variables para acumular
-        avg_latency = 0.0
-        avg_errors = 0.0
-        avg_cpu_sat = 0.0
-        avg_ram_sat = 0.0
-        
-        for i in range(self.n_max):
-            idx_base = i * 6 
-            status = state[idx_base + 5] 
+            # Nuevos pesos para control de estabilidad
+            W_SATURATION_PREVENTIVE = 2.0 
+            W_SCALE_FRICTION = 2.0 # Fricción para evitar el chattering (serrucho)
             
-            if status == 1.0:
-                cpu_pct = state[idx_base]
-                ram_pct = state[idx_base + 1]
-                latency = state[idx_base + 3]
-                errores = state[idx_base + 4]
+            if cant_active_containers == 0:
+                return -200.0
 
-                avg_latency += latency
-                avg_errors += errores
+            # Variables para acumular
+            avg_latency = 0.0
+            avg_errors = 0.0
+            avg_cpu = 0.0
+            avg_cpu_sat = 0.0
+            avg_ram_sat = 0.0
+            
+            for i in range(self.n_max):
+                idx_base = i * 6 
+                status = state[idx_base + 5] 
                 
-                if cpu_pct > 0.80:
-                    avg_cpu_sat += (cpu_pct - 0.80)
-                if ram_pct > 0.85:
-                    avg_ram_sat += (ram_pct - 0.85)
-                    
-        # PROMEDIAMOS las métricas de los nodos encendidos
-        avg_latency /= cant_active_containers
-        avg_errors /= cant_active_containers
-        avg_cpu_sat /= cant_active_containers
-        avg_ram_sat /= cant_active_containers
-        
-        # Calculo de penalizaciones (ahora usando los promedios reales)
-        latency_penalty = W_LATENCY * (avg_latency ** 2) 
-        error_penalty = W_ERRORS * avg_errors 
-        cost_penalty = W_COST * (cant_active_containers / self.n_max)
-        saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
-        
-        total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty)
+                if status == 1.0:
+                    cpu_pct = state[idx_base]
+                    ram_pct = state[idx_base + 1]
+                    latency = state[idx_base + 3]
+                    errores = state[idx_base + 4]
 
-        # Evitar bucle de prendido y apagado
-        scale_decision = action[-1]
-        if scale_decision <= 0.3 or scale_decision >= 0.7:
-            total_reward -= 0.05 
-        
-        return total_reward
+                    avg_latency += latency
+                    avg_errors += errores
+                    avg_cpu += cpu_pct
+                    
+                    if cpu_pct > 0.80:
+                        avg_cpu_sat += (cpu_pct - 0.80)
+                    if ram_pct > 0.85:
+                        avg_ram_sat += (ram_pct - 0.85)
+                        
+            # PROMEDIAMOS las métricas de los nodos encendidos
+            avg_latency /= cant_active_containers
+            avg_errors /= cant_active_containers
+            avg_cpu /= cant_active_containers
+            avg_cpu_sat /= cant_active_containers
+            avg_ram_sat /= cant_active_containers
+            
+            # Calculo de penalizaciones
+            
+            # Tope de Latencia (SLA Cap)
+            if avg_latency <= 0.1:
+                latency_penalty = 0.0
+            else:
+                latency_penalty = W_LATENCY * (avg_latency ** 2) 
+                
+            error_penalty = W_ERRORS * avg_errors 
+            cost_penalty = W_COST * (cant_active_containers / self.n_max)
+            saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
+            
+            # Zona muerta de cpu. Si el cpu promedio está entre 40% y 75%, no hay penalización extra por overprovision.
+            # Agrego un poco de heuristica humana para acelerar la convergencia del agente 
+            CPU_TARGET_MIN = 0.40
+            CPU_TARGET_MAX = 0.75  # Frontera superior segura
+            
+            if avg_cpu < CPU_TARGET_MIN:
+                # Castigo por tener contenedores ociosos
+                overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
+            elif avg_cpu > CPU_TARGET_MAX:
+                # Castigo suave preventivo por acercarse al límite antes del colapso
+                overprovision_penalty = W_SATURATION_PREVENTIVE * (avg_cpu - CPU_TARGET_MAX)
+            else:
+                overprovision_penalty = 0.0
+
+            total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
+            
+            # Penalización por escalar demasiado frecuentemente (chattering)
+            scale_decision = action[-1]
+            if scale_decision <= 0.3 or scale_decision >= 0.7:
+                # Castigamos la acción de escalar para forzar la inercia
+                total_reward -= W_SCALE_FRICTION
+
+            return float(total_reward)

@@ -10,7 +10,7 @@ def parse_args():
     parser.add_argument('-p', '--pipeline', type=str, choices=['real', 'simulado', 'test_ppo', 'test_baseline', 'test_pid', 'all', 'sweep'], default='all', help='Pipeline to run')
     parser.add_argument('-n', '--nodes', type=int, default=5, help='Amount of nodes to run the training')
     parser.add_argument('-f', '--file', type=str, default='training_metrics.csv', help='Name of the CSV file to save metrics (will append timestamp to avoid overwrites)')
-    parser.add_argument('-si', '--simulated_iterations', type=int, default=50000, help='Simulated training iterations')
+    parser.add_argument('-si', '--simulated_iterations', type=int, default=200000, help='Simulated training iterations')
     parser.add_argument('-ri', '--real_iterations', type=int, default=5000, help='Real training iterations')
     parser.add_argument('-ti', '--testing_iterations', type=int, default=1000, help='Testing iterations')
     parser.add_argument('-pi', '--pid_iterations', type=int, default=1000, help='PID baseline iterations')

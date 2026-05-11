@@ -6,31 +6,6 @@ An autonomous cluster orchestration system that uses **Proximal Policy Optimizat
 
 ## Architecture Overview
 
-<!-- ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CONTROL PLANE                            │
-│   PPO Agent ──POST /action──► Bridge ──GET /metrics──► PPO Agent│
-└───────────────────────┬─────────────────────────────────────────┘
-                        │
-          ┌─────────────▼──────────────┐
-          │     Bridge (FastAPI)        │
-          │  ClusterOrchestration.py    │
-          └──────┬─────────────┬───────┘
-                 │             │
-    ┌────────────▼──┐    ┌─────▼──────────┐
-    │  Docker Daemon│    │    HAProxy      │
-    │  (cgroups:    │    │  (L7 Routing,  │
-    │  CPU / RAM)   │    │  Latency,Errors)│
-    └────────────┬──┘    └─────┬──────────┘
-                 │             │
-          ┌──────▼─────────────▼──────┐
-          │   Docker Container Cluster │
-          │  lbas_node_0 … lbas_node_N │
-          └───────────────────────────┘
-                        ▲
-               HTTP Traffic (Locust)
-``` -->
-
 <img width="1287" height="622" alt="image" src="https://github.com/user-attachments/assets/57d54f1e-42ff-45e5-864f-efd5ca485df1" />
 
 The system is composed of four layers:

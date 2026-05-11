@@ -20,11 +20,12 @@ class TrainingMetricsCallback(BaseCallback):
             'rollout/cpu_mean': [],       
             'rollout/ram_mean': [],
             'rollout/latency_mean': [],
-            'rollout/error_mean': []
+            'rollout/error_mean': [],
+            'rollout/workload_mean': [] # Agregue para guardar el promedio de workload por rollout
         }
         self.train_history = {'train/policy_loss': [], 'train/value_loss': []}
         
-        self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': []}
+        self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': [], 'workload': []}
         
         self._init_csv()
     
@@ -73,6 +74,7 @@ class TrainingMetricsCallback(BaseCallback):
                 self.step_metrics_buffer['ram'].append(info['ram_avg'])
                 self.step_metrics_buffer['latency'].append(info['latency_avg'])
                 self.step_metrics_buffer['errors'].append(info['error_avg'])
+                self.step_metrics_buffer['workload'].append(info['workload']) # workload por paso
         return True
     
     def _on_rollout_end(self):
@@ -89,11 +91,13 @@ class TrainingMetricsCallback(BaseCallback):
                 np.mean(self.step_metrics_buffer['ram']) if self.step_metrics_buffer['ram'] else 0.0)
             self.rollout_history['rollout/latency_mean'].append(
                 np.mean(self.step_metrics_buffer['latency']) if self.step_metrics_buffer['latency'] else 0.0)
-            self.rollout_history['rollout/error_mean'].append(
+            self.rollout_history['rollout/error_mean'].append(  
                 np.mean(self.step_metrics_buffer['errors']) if self.step_metrics_buffer['errors'] else 0.0)
+            self.rollout_history['rollout/workload_mean'].append(
+                np.mean(self.step_metrics_buffer['workload']) if self.step_metrics_buffer['workload'] else 0.0) # Promedio de workload
             
             # Limpiamos el buffer para el próximo ciclo
-            self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': []}
+            self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': [], 'workload': []}
             
             # Métricas de pérdida
             self.train_history['train/policy_loss'].append(self._get_logger_value('train/policy_gradient_loss'))
@@ -102,3 +106,65 @@ class TrainingMetricsCallback(BaseCallback):
             self._append_to_csv()
         except Exception: 
             pass
+
+
+class WorkloadBehaviorCallback(BaseCallback):
+    """
+    Callback personalizado para registrar el comportamiento de workload por step,
+    incluyendo etapa del entrenamiento (early/middle/late).
+    """
+    def __init__(self, total_timesteps: int, save_dir: str = "./training_results", 
+                 file_name: str = "workload_behavior.csv", verbose: int = 0):
+        super().__init__(verbose)
+        self.total_timesteps = total_timesteps
+        self.save_dir = save_dir
+        self.csv_path = os.path.join(save_dir, file_name)
+        os.makedirs(save_dir, exist_ok=True)
+        self._init_csv()
+    
+    def _init_csv(self):
+        fieldnames = ['timestep', 'workload', 'active_containers', 'stage']
+        with open(self.csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+    
+    def _on_step(self):
+        """
+        Método llamado por SB3 en cada step. Registra los datos en el CSV.
+        Retorna True siempre para no detener el entrenamiento.
+        """
+        # Obtener información del step actual
+        infos = self.locals.get("infos", [{}])
+        if not infos:
+            return True
+        info = infos[0]
+        
+        # Extraer valores
+        timestep = self.num_timesteps
+        workload = info.get('workload', 0.0)
+        active_containers = info.get('activos', 0)
+        
+        # Calcular etapa del entrenamiento
+        if self.total_timesteps <= 0:
+            stage = "early"
+        else:
+            progress = timestep / self.total_timesteps
+            if progress < 0.33:
+                stage = "early"
+            elif progress < 0.66:
+                stage = "middle"
+            else:
+                stage = "late"
+        
+        # Escribir fila en CSV
+        fieldnames = ['timestep', 'workload', 'active_containers', 'stage']
+        with open(self.csv_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writerow({
+                'timestep': timestep,
+                'workload': float(workload),
+                'active_containers': int(active_containers),
+                'stage': stage
+            })
+        
+        return True
