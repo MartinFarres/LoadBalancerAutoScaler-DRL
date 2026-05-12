@@ -27,7 +27,7 @@ class TrafficGenerator:
             # TESTING ------------------
             8: self._calc_sustained_limit,   
             9: self._calc_fast_oscillation, 
-            10: self._calc_flash_cras
+            10: self._calc_flash_crash
         }
     
     def reset(self, seed=None):
