@@ -15,7 +15,7 @@ class LoadBalancerEnv(gym.Env):
     Soporta modo Real (FastAPI/Docker) y modo Simulado (Matemático)
     """
     
-    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False):
+    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
         self.max_memory = max_memory 
@@ -23,6 +23,7 @@ class LoadBalancerEnv(gym.Env):
         self.current_step = 0
         self.api_url = api_url
         self.simulated = simulated
+        self.testing = testing
 
         # OBSERVATION SPACE
         self.observation_space = spaces.Box(
@@ -49,7 +50,7 @@ class LoadBalancerEnv(gym.Env):
         if self.simulated:
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen = TrafficGenerator()
+            self.traffic_gen = TrafficGenerator(testing=self.testing)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
