@@ -30,7 +30,9 @@ def post_action(action:AgentAction):
 @app.get("/metrics")
 def get_metrics() -> ClusterMetrics:
     nodes = clusterOrchestration.get_metrics()
-    workload_norm = clusterOrchestration.get_workload_norm()
+    # workload_norm = clusterOrchestration.get_workload_norm()
+    # Usa el user_count que Locust reporta, no el req_rate de HAProxy
+    workload_norm = getattr(clusterOrchestration, 'last_workload_norm', 0.0)
     return ClusterMetrics(nodes=nodes, workload_norm=workload_norm)
 
 @app.post("/workload")

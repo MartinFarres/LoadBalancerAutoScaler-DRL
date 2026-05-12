@@ -27,7 +27,7 @@ class ClusterOrchestration():
         
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
-        self.max_req_rate = 200.0 
+        self.max_req_rate = 60.0 
         
         # Fast Metrics C Collector
         self.lib = ctypes.CDLL('./libfastmetrics.so')

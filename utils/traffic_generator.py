@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 class TrafficGenerator:
-    def __init__(self, total_users=4000, min_duration=120, max_duration=900):
+    def __init__(self, total_users=4000, min_duration=60, max_duration=900):
         self.total_users = total_users
         self.min_duration = min_duration
         self.max_duration = max_duration
@@ -23,7 +23,14 @@ class TrafficGenerator:
             6: self._calc_sawtooth,
             7: self._calc_spike_recovery
         }
-        
+    
+    def reset(self, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+        self.running_fn = False
+        self.function_tick_start = 0
+
+    
     def get_workload(self, current_time):
         relative_time = current_time - self.function_tick_start
 
@@ -52,7 +59,7 @@ class TrafficGenerator:
         self.function_number = np.random.randint(0, 8)
         self.function_tick_start = current_time
         
-        self.load_min = self.total_users * np.random.uniform(0.25, 0.50)
+        self.load_min = self.total_users * np.random.uniform(0.05, 0.25)
         self.load_max = self.total_users * np.random.uniform(0.65, 1.00)
         
         self.shift_peak_one = np.random.uniform(0.1 , 0.4)

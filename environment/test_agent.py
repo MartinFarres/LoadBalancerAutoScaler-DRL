@@ -11,7 +11,8 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     np.set_printoptions(precision=2, suppress=True, linewidth=120)
     
     env = LoadBalancerEnv(simulated=True, max_steps=iterations, n_max=nodes)
-    
+    env.reset(seed=42)
+
     print("Loading trained agent...")
     
     model = PPO.load("ppo_lb_production_ready")
