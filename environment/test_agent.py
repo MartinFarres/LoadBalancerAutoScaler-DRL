@@ -14,7 +14,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
 
     print("Loading trained agent...")
     
-    model = PPO.load("ppo_lb_production_ready")
+    model = PPO.load(f"ppo_lb_production_ready_{nodes}_nodes")
     
     obs, info = env.reset(42)
     
@@ -88,10 +88,9 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     avg_cost_efficiency = np.mean(cost_efficiencies)
     
     # Guardar a CSV
-    formatted_file = f"test_ppo_n{nodes}_i{iterations}_{file}"
-    save_path = os.path.join("./training_results/phase2", formatted_file) # or somewhere else for test
-    os.makedirs("./training_results/testing_results", exist_ok=True)
-    save_path = os.path.join("./training_results/testing_results", formatted_file)
+    formatted_file = f"test_ppo_{nodes}_nodes_i{iterations}_{file}"
+    os.makedirs(f"./training_results/testing_results_{nodes}_nodes", exist_ok=True)
+    save_path = os.path.join(f"./training_results/testing_results_{nodes}_nodes", formatted_file)
     pd.DataFrame({
         'cpu_promedio': hist_cpu_total,
         'ram_promedio': hist_ram_total,
