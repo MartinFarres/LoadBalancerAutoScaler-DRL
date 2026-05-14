@@ -58,7 +58,10 @@ class LoadBalancerEnv(gym.Env):
         self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
         
         if not self.simulated:
-            requests.get(f"{self.api_url}/reset")
+            try:
+                requests.get(f"{self.api_url}/reset", timeout=10)
+            except Exception as e:
+                print(f"Reset request failed: {e}")
             time.sleep(0.5) # Ajustado al límite para HAProxy
             self.actual_state = self.get_real_metrics()
         else:
@@ -79,9 +82,12 @@ class LoadBalancerEnv(gym.Env):
         if not self.simulated:
             payload = {
                 "weights": raw_weights.tolist(),
-                "decision": float(scale_desision) 
+                "decision": float(scale_desision)
             }
-            requests.post(f"{self.api_url}/action", json=payload)
+            try:
+                requests.post(f"{self.api_url}/action", json=payload, timeout=10)
+            except Exception as e:
+                print(f"Action request failed: {e}")
 
             # ESPERA DINAMICA
             # Escalo el cluster?
@@ -162,7 +168,7 @@ class LoadBalancerEnv(gym.Env):
         new_state = []
         workload_norm = 0.0
         try:
-            response = requests.get(f"{self.api_url}/metrics").json()
+            response = requests.get(f"{self.api_url}/metrics", timeout=10).json()
 
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
