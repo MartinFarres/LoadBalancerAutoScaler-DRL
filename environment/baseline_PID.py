@@ -86,7 +86,6 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
 
         # Guardamos
         hist_cpu_total.append(avg_cpu)
-        hist_cpu_total.append(cpu_total)
         hist_ram_total.append(ram_total)
         hist_latency.append(avg_latency)
         hist_errors.append(total_errors)

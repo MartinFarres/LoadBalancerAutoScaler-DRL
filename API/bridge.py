@@ -44,8 +44,9 @@ def post_workload(user_count: int, total_users: int = 4000):
 @app.get("/reset")
 def reset():
     clusterOrchestration.reset()
+    return {"status": "reset"}
 
-@app.get("/cleanup")
+@app.post("/cleanup")
 def cleanup():
     clusterOrchestration.stop_all()
     return {"status": "cleaned up"}
