@@ -103,33 +103,35 @@ python main.py --pipeline <PIPELINE> [OPTIONS]
 python main.py --pipeline all
 ```
 
-This executes in sequence: simulated pre-training → real fine-tuning → baseline comparison tests.
+This executes in sequence: simulated pre-training → real fine-tuning → all three comparison tests in **simulated** mode → all three comparison tests in **real** mode.
 
 ---
 
 ## `main.py` — Arguments Reference
 
-| Argument                 | Short | Type  | Default                | Description                                                  |
-| ------------------------ | ----- | ----- | ---------------------- | ------------------------------------------------------------ |
-| `--pipeline`             | `-p`  | `str` | `all`                  | Which pipeline to run. See options below.                    |
-| `--nodes`                | `-n`  | `int` | `5`                    | Number of Docker containers in the cluster. Must be ≤ 10.    |
-| `--file`                 | `-f`  | `str` | `training_metrics.csv` | Output CSV filename for metrics (a prefix is auto-appended). |
-| `--simulated_iterations` | `-si` | `int` | `50000`                | Timesteps for Phase 1 simulated training.                    |
-| `--real_iterations`      | `-ri` | `int` | `5000`                 | Timesteps for Phase 2 real-world fine-tuning.                |
-| `--testing_iterations`   | `-ti` | `int` | `1000`                 | Steps for the PPO agent evaluation run.                      |
-| `--pid_iterations`       | `-pi` | `int` | `1000`                 | Steps for the PID baseline evaluation.                       |
-| `--agent_iterations`     | `-ai` | `int` | `1000`                 | Steps for the industry baseline evaluation.                  |
+| Argument                  | Short  | Type  | Default                | Description                                                                          |
+| ------------------------- | ------ | ----- | ---------------------- | ------------------------------------------------------------------------------------ |
+| `--pipeline`              | `-p`   | `str` | `all`                  | Which pipeline to run. See options below.                                            |
+| `--nodes`                 | `-n`   | `int` | `5`                    | Number of Docker containers in the cluster. Must be ≤ 10.                            |
+| `--file`                  | `-f`   | `str` | `training_metrics.csv` | Output CSV filename for metrics (a prefix is auto-appended).                         |
+| `--simulated_iterations`  | `-si`  | `int` | `50000`                | Timesteps for Phase 1 simulated training.                                            |
+| `--real_iterations`       | `-ri`  | `int` | `5000`                 | Timesteps for Phase 2 real-world fine-tuning.                                        |
+| `--sim_test_iterations`   | `-sti` | `int` | `None`                 | Steps for **all** simulated test runs (PPO, PID, BAI). Overrides `-ti`/`-pi`/`-ai`. |
+| `--real_test_iterations`  | `-rti` | `int` | `None`                 | Steps for **all** real test runs (PPO, PID, BAI). Overrides `-ti`/`-pi`/`-ai`.      |
+| `--testing_iterations`    | `-ti`  | `int` | `1000`                 | Steps for the PPO agent evaluation run (per-agent override).                         |
+| `--pid_iterations`        | `-pi`  | `int` | `1000`                 | Steps for the PID baseline evaluation (per-agent override).                          |
+| `--agent_iterations`      | `-ai`  | `int` | `1000`                 | Steps for the industry baseline evaluation (per-agent override).                     |
 
 ### `--pipeline` options
 
-| Value           | Description                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `simulado`      | Phase 1 only — trains the agent in the fast mathematical simulator. No Docker required.       |
-| `real`          | Phase 2 only — fine-tunes an existing model on a live Docker cluster. Requires Phase 1 model. |
-| `test_ppo`      | Runs inference with the trained PPO model and generates a metrics summary table.              |
-| `test_baseline` | Runs the industry baseline (Round Robin + static CPU thresholds).                             |
-| `test_pid`      | Runs the PID controller baseline.                                                             |
-| `all`           | Runs the entire pipeline: Phase 1 → Phase 2 → all three test comparisons.                     |
+| Value           | Description                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `simulado`      | Phase 1 only — trains the agent in the fast mathematical simulator. No Docker required.                                  |
+| `real`          | Phase 2 only — fine-tunes an existing model on a live Docker cluster. Requires Phase 1 model.                            |
+| `test_ppo`      | Evaluates the trained PPO model in both simulated and real modes, generating a metrics summary table for each.           |
+| `test_baseline` | Evaluates the industry baseline (Round Robin + static CPU thresholds) in both simulated and real modes.                  |
+| `test_pid`      | Evaluates the PID controller baseline in both simulated and real modes.                                                  |
+| `all`           | Full pipeline: Phase 1 → Phase 2 → all three tests in simulated mode → all three tests in real mode.                    |
 
 ### Examples
 
@@ -140,14 +142,19 @@ python main.py -p simulado -n 10 -si 100000
 # Real fine-tuning only, 5 nodes, 2000 steps
 python main.py -p real -n 5 -ri 2000
 
-# Evaluate the trained PPO agent for 3000 steps
-python main.py -p test_ppo -n 5 -ti 3000
+# Evaluate PPO agent: 50k simulated steps, 3k real steps
+python main.py -p test_ppo -n 5 -sti 50000 -rti 3000
 
-# Run only the industry baseline comparison
+# Run all three baselines with unified iteration counts (simulated and real)
+python main.py -p test_baseline -n 5 -sti 50000 -rti 5000
+python main.py -p test_pid      -n 5 -sti 50000 -rti 5000
+
+# Per-agent fine-grained override (when not using -sti/-rti)
+python main.py -p test_ppo -n 5 -ti 3000
 python main.py -p test_baseline -n 5 -ai 5000
 
-# Full pipeline with custom node count and iterations
-python main.py -p all -n 8 -si 80000 -ri 4000 -ti 2000
+# Full pipeline: 5M simulated test steps, 500k real test steps, 10 nodes
+python main.py -p all -n 10 -si 5000000 -ri 1500 -sti 500000 -rti 500000
 ```
 
 ---
@@ -179,19 +186,26 @@ python environment/train_agent.py train_phase_2_real_world \
 ### Test the PPO Agent
 
 ```bash
-python environment/test_agent.py \
-  --nodes 5 \
-  --iterations 5000 \
-  --file testing_metrics.csv
+# Simulated mode (no Docker required)
+python environment/test_agent.py --nodes 5 --iterations 5000 --simulated
+
+# Real mode (Bridge API + Docker cluster must be running)
+python environment/test_agent.py --nodes 5 --iterations 5000
 ```
 
 ### Test Baselines
 
 ```bash
-# Industry baseline (Round Robin + thresholds)
+# Industry baseline — simulated
+python environment/baseline_agent.py --nodes 5 --iterations 5000 --simulated
+
+# Industry baseline — real
 python environment/baseline_agent.py --nodes 5 --iterations 5000
 
-# PID controller baseline
+# PID controller baseline — simulated
+python environment/baseline_PID.py --nodes 5 --iterations 5000 --simulated
+
+# PID controller baseline — real
 python environment/baseline_PID.py --nodes 5 --iterations 5000
 ```
 

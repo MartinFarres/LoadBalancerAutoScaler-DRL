@@ -64,7 +64,7 @@ class TrafficGenerator:
         if not self.testing:
             self.function_number = np.random.randint(0, 8)
         else:
-            self.function_number = np.random.randint(8, 11)
+            self.function_number = np.random.randint(0, 11)
         
         self.time_limit = np.random.randint(self.min_duration, self.max_duration)
         self.function_tick_start = current_time

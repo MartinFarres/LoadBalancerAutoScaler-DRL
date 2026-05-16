@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 
-def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
-    
+def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulated=True):
+
     np.set_printoptions(precision=2, suppress=True, linewidth=120)
-    
-    env = LoadBalancerEnv(simulated=True, max_steps=iterations, n_max=nodes, testing=True)
+
+    env = LoadBalancerEnv(simulated=simulated, max_steps=iterations, n_max=nodes, testing=True)
 
     print("Loading trained agent...")
     
@@ -88,7 +88,8 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     avg_cost_efficiency = np.mean(cost_efficiencies)
     
     # Guardar a CSV
-    formatted_file = f"test_ppo_{nodes}_nodes_i{iterations}_{file}"
+    mode_tag = "sim" if simulated else "real"
+    formatted_file = f"test_ppo_{mode_tag}_{nodes}_nodes_i{iterations}_{file}"
     os.makedirs(f"./training_results/testing_results_{nodes}_nodes", exist_ok=True)
     save_path = os.path.join(f"./training_results/testing_results_{nodes}_nodes", formatted_file)
     pd.DataFrame({
@@ -119,6 +120,7 @@ if __name__ == "__main__":
     parser.add_argument('--nodes', type=int, default=5)
     parser.add_argument('--file', type=str, default='testing_metrics.csv')
     parser.add_argument('--iterations', type=int, default=5000)
+    parser.add_argument('--simulated', action='store_true', default=False)
     args = parser.parse_args()
 
-    run_test_agent(nodes=args.nodes, iterations=args.iterations, file=args.file)
+    run_test_agent(nodes=args.nodes, iterations=args.iterations, file=args.file, simulated=args.simulated)

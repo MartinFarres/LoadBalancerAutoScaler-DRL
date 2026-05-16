@@ -55,7 +55,7 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
 
     for i in range(steps):
         activos = info.get('activos', 1)
-        workload = info.get('workload') * 4000 # Desnormalizamos -> asumiendo 4000 total_users
+        workload = info.get('workload', 0.0) * 4000 # Desnormalizamos -> asumiendo 4000 total_users
 
         # Conteo de eventos de escalado 
         if i > 0 and activos != last_activos:
@@ -120,7 +120,8 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     avg_cost_efficiency = np.mean(cost_efficiencies)
     
   
-    formatted_file = f"test_pid_n{n_max}_i{steps}_{file}"
+    mode_tag = "sim" if simulated else "real"
+    formatted_file = f"test_pid_{mode_tag}_n{n_max}_i{steps}_{file}"
     os.makedirs("./training_results/testing_results", exist_ok=True)
     save_path = os.path.join("./training_results/testing_results", formatted_file)
     pd.DataFrame({
@@ -144,4 +145,12 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     )
 
 if __name__ == "__main__":
-    run_pid_baseline(simulated=True)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--nodes', type=int, default=5)
+    parser.add_argument('--file', type=str, default='testing_metrics.csv')
+    parser.add_argument('--iterations', type=int, default=5000)
+    parser.add_argument('--simulated', action='store_true', default=False)
+    args = parser.parse_args()
+
+    run_pid_baseline(simulated=args.simulated, steps=args.iterations, n_max=args.nodes, file=args.file)

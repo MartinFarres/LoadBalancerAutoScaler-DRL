@@ -12,9 +12,11 @@ def parse_args():
     parser.add_argument('-f', '--file', type=str, default='training_metrics.csv', help='Name of the CSV file to save metrics (will append timestamp to avoid overwrites)')
     parser.add_argument('-si', '--simulated_iterations', type=int, default=200000, help='Simulated training iterations')
     parser.add_argument('-ri', '--real_iterations', type=int, default=5000, help='Real training iterations')
-    parser.add_argument('-ti', '--testing_iterations', type=int, default=1000, help='Testing iterations')
+    parser.add_argument('-ti', '--testing_iterations', type=int, default=1000, help='Testing iterations (PPO agent)')
     parser.add_argument('-pi', '--pid_iterations', type=int, default=1000, help='PID baseline iterations')
-    parser.add_argument('-ai', '--agent_iterations', type=int, default=1000, help='Agent baseline iterations')
+    parser.add_argument('-ai', '--agent_iterations', type=int, default=1000, help='Industry baseline iterations')
+    parser.add_argument('-sti', '--sim_test_iterations', type=int, default=None, help='Iterations for ALL simulated tests (overrides -ti/-pi/-ai)')
+    parser.add_argument('-rti', '--real_test_iterations', type=int, default=None, help='Iterations for ALL real tests (overrides -ti/-pi/-ai)')
     
     return parser.parse_args()
 
@@ -65,70 +67,80 @@ def real_training(processes, args):
     down_processes(processes)
 
 
-def test_agent(processes, args):
-    print("[1/1] Iniciando Testing Agente PPO...")
-    print("-" * 50)
-    time.sleep(2)
-   
-    cmd = [
-        sys.executable, "environment/test_agent.py",
-        "--nodes", str(args.nodes),
-        "--file", args.file,
-        "--iterations", str(args.testing_iterations)
-    ]
-    test_process = subprocess.Popen(cmd)
-    processes.append(("PPO Testing", test_process))
-
+def _run_test(script, name, extra_args, simulated):
+    """Start a test subprocess, wait for it, return (process_name, process) tuple."""
+    cmd = [sys.executable, script] + extra_args
+    if simulated:
+        cmd.append("--simulated")
+    proc = subprocess.Popen(cmd)
     try:
-        test_process.wait()
+        proc.wait()
     except KeyboardInterrupt:
         print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
-    
-    down_processes(processes)
+    return (name, proc)
 
 
-def test_baseline(processes, args):
-    print("[1/1] Iniciando Testing Baseline (Umbrales Clásicos y Round Robin)...")
+def test_agent(args, simulated=False, iterations=None):
+    iters = iterations if iterations is not None else args.testing_iterations
+    mode = "Simulado" if simulated else "Real"
+    print(f"[1/1] Iniciando Testing Agente PPO ({mode})...")
     print("-" * 50)
-    time.sleep(2)
-   
-    cmd = [
-        sys.executable, "environment/baseline_agent.py",
-        "--nodes", str(args.nodes),
-        "--file", args.file,
-        "--iterations", str(args.agent_iterations)
-    ]
-    test_process = subprocess.Popen(cmd)
-    processes.append(("Baseline Industry Testing", test_process))
 
-    try:
-        test_process.wait()
-    except KeyboardInterrupt:
-        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
-    
-    down_processes(processes)
+    processes = []
+    if not simulated:
+        time.sleep(2)
+        processes = init_processes(args.nodes)
+
+    processes.append(_run_test(
+        "environment/test_agent.py", "PPO Testing",
+        ["--nodes", str(args.nodes), "--file", args.file, "--iterations", str(iters)],
+        simulated
+    ))
+
+    if not simulated:
+        down_processes(processes)
 
 
-def test_pid(processes, args):
-    print("[1/1] Iniciando Testing Baseline (Controlador PID)...")
+def test_baseline(args, simulated=False, iterations=None):
+    iters = iterations if iterations is not None else args.agent_iterations
+    mode = "Simulado" if simulated else "Real"
+    print(f"[1/1] Iniciando Testing Baseline BAI ({mode})...")
     print("-" * 50)
-    time.sleep(2)
-   
-    cmd = [
-        sys.executable, "environment/baseline_PID.py",
-        "--nodes", str(args.nodes),
-        "--file", args.file,
-        "--iterations", str(args.pid_iterations)
-    ]
-    test_process = subprocess.Popen(cmd)
-    processes.append(("Baseline PID Testing", test_process))
 
-    try:
-        test_process.wait()
-    except KeyboardInterrupt:
-        print("\n\n Testing interrumpido por el usuario (Ctrl+C).")
-    
-    down_processes(processes)
+    processes = []
+    if not simulated:
+        time.sleep(2)
+        processes = init_processes(args.nodes)
+
+    processes.append(_run_test(
+        "environment/baseline_agent.py", "Baseline Industry Testing",
+        ["--nodes", str(args.nodes), "--file", args.file, "--iterations", str(iters)],
+        simulated
+    ))
+
+    if not simulated:
+        down_processes(processes)
+
+
+def test_pid(args, simulated=False, iterations=None):
+    iters = iterations if iterations is not None else args.pid_iterations
+    mode = "Simulado" if simulated else "Real"
+    print(f"[1/1] Iniciando Testing Baseline PID ({mode})...")
+    print("-" * 50)
+
+    processes = []
+    if not simulated:
+        time.sleep(2)
+        processes = init_processes(args.nodes)
+
+    processes.append(_run_test(
+        "environment/baseline_PID.py", "Baseline PID Testing",
+        ["--nodes", str(args.nodes), "--file", args.file, "--iterations", str(iters)],
+        simulated
+    ))
+
+    if not simulated:
+        down_processes(processes)
 
 def wandb_sweep(args):
     print("[1/1] Lanzando proceso de W&B Sweep... ")
@@ -220,25 +232,34 @@ if __name__ == "__main__":
     if comando == "simulado":
         simulated_training(args)
     elif comando == "real":
-        real_training(init_processes(args.nodes), args) 
+        real_training(init_processes(args.nodes), args)
     elif comando == "test_ppo":
-        test_agent(init_processes(args.nodes), args) 
+        test_agent(args, simulated=True, iterations=args.sim_test_iterations)
+        test_agent(args, simulated=False, iterations=args.real_test_iterations)
     elif comando == "test_baseline":
-        test_baseline(init_processes(args.nodes), args) 
+        test_baseline(args, simulated=True, iterations=args.sim_test_iterations)
+        test_baseline(args, simulated=False, iterations=args.real_test_iterations)
     elif comando == "test_pid":
-        test_pid(init_processes(args.nodes), args) 
+        test_pid(args, simulated=True, iterations=args.sim_test_iterations)
+        test_pid(args, simulated=False, iterations=args.real_test_iterations)
     elif comando == "all":
         print("Iniciando pipeline completo (Simulación -> Real -> Testing Múltiple)...")
         simulated_training(args)
-        real_training(init_processes(args.nodes), args) 
-        
+        real_training(init_processes(args.nodes), args)
+
         print("\n\n" + "="*50)
         print("INICIANDO BATERÍA DE PRUEBAS COMPARATIVAS")
         print("="*50)
-        
-        test_baseline(init_processes(args.nodes), args) 
-        test_pid(init_processes(args.nodes), args) 
-        test_agent(init_processes(args.nodes), args) 
+
+        print("\n--- Tests en entorno SIMULADO ---")
+        test_baseline(args, simulated=True, iterations=args.sim_test_iterations)
+        test_pid(args, simulated=True, iterations=args.sim_test_iterations)
+        test_agent(args, simulated=True, iterations=args.sim_test_iterations)
+
+        print("\n--- Tests en entorno REAL ---")
+        test_baseline(args, simulated=False, iterations=args.real_test_iterations)
+        test_pid(args, simulated=False, iterations=args.real_test_iterations)
+        test_agent(args, simulated=False, iterations=args.real_test_iterations)
     elif comando == "sweep":
         wandb_sweep(args)
     else:
