@@ -1,4 +1,4 @@
-# Introducción
+# 1. Introducción
 
 En el despliegue de microservicios y aplicaciones modernas, la eficiencia operativa depende de la capacidad del sistema para adaptarse a la demanda variable. Docker se ha consolidado como una herramienta fundamental para la contenerización y gestión de entornos de desarrollo y producción debido a su simplicidad y portabilidad. Sin embargo, un reto crítico dentro de estos entornos es el autoescalado y el balanceo de cargas. El autoescalado es la capacidad de ajustar dinámicamente el número de contenedores en ejecución para responder a picos de tráfico o carga de procesamiento. Por su parte, el balanceo de cargas consiste en la distribución eficiente del tráfico entrante entre los servidores o nodos disponibles.
 
@@ -6,13 +6,17 @@ En la industria, se suelen emplear algoritmos estándar para resolver estos prob
 
 Este tipo de problemas cuenta con la dificultad inherente de tener que obtener, en tiempo real, métricas correspondientes a los contenedores, tales como el uso de CPU, memoria RAM, latencia de red y la tasa de errores. Para simular y evaluar este proceso, se ha utilizado la biblioteca Gymnasium de OpenAI, creando un entorno personalizado que integra el vector de observaciones del sistema, el espacio de acciones del orquestador y una función de recompensa diseñada específicamente para este ecosistema.
 
-## Marco teórico
+<br>
 
-### Escalado automático y Balanceo de Cargas en arquitecturas de microservicios
+# 2. Marco teórico
+
+### 2.1 Escalado automático y Balanceo de Cargas en arquitecturas de microservicios
 
 Si bien el escalado automático está estrechamente relacionado con el balanceo de cargas, no son el mismo concepto, aunque a menudo operan en conjunto. Ambos procesos afectan la asignación de recursos de un sistema para lidiar con la carga de trabajo, velando siempre por la optimización y evitando tanto las sobrecargas como los estados pasivos (desperdicio de recursos).
 
-#### Auto Scaler (Autoescalador)
+<br>
+
+#### 2.1.1 Auto Scaler (Autoescalador)
 
 El _auto-scaling_, conocido comúnmente como "escalado automático", es una característica de la computación en la nube que asigna dinámicamente los recursos computacionales en función de la demanda del sistema. Se utiliza para garantizar que las aplicaciones cuenten con los recursos necesarios para mantener una disponibilidad constante y alcanzar los objetivos de rendimiento, promoviendo además un uso eficiente del hardware y minimizando los costos operativos (IBM)[https://www.ibm.com/mx-es/think/topics/autoscaling].
 
@@ -22,7 +26,9 @@ El **escalado horizontal** (también conocido como _scale-out/scale-in_) es la a
 
 El **escalado dinámico** es una política que reacciona a las necesidades de recursos a medida que ocurren, ajustando la asignación en función de la utilización en tiempo real. Con esta política, los sistemas pueden activar instancias adicionales de forma automática cuando se alcanza un umbral específico de estrés, como un alto porcentaje de uso de la CPU o un incremento brusco en la latencia de las peticiones.
 
-#### Load Balancer (Balanceador de Carga)
+<br>
+
+#### 2.1.2 Load Balancer (Balanceador de Carga)
 
 El _Load Balancing_ es la práctica de distribuir el trabajo computacional entre dos o más computadoras. En el mundo de la infraestructura de redes, se utiliza principalmente para dividir el tráfico entrante (como peticiones HTTP) entre varios servidores. De esta forma, se busca reducir el estrés sobre cada nodo individual, haciendo que el clúster sea más eficiente, aumente su rendimiento general, reduzca la latencia y minimice la tasa de errores provocada por la saturación de los servicios [https://www.cloudflare.com/learning/performance/what-is-load-balancing/].
 
@@ -35,7 +41,9 @@ Los **Load Balancers estáticos** distribuyen la carga de trabajo de forma prede
 
 Los **Load Balancers dinámicos**, en cambio, monitorean continuamente la telemetría y el rendimiento de los servidores (como el uso de CPU, memoria o el tiempo de respuesta) antes de enrutar el tráfico. Estos algoritmos buscan inteligentemente las instancias menos saturadas o con conexiones más rápidas para asignarles el trabajo, garantizando así una distribución adaptativa que responde a los cuellos de botella del sistema en tiempo real.
 
-### Aprendizaje por Refuerzo (Reinforcement Learning)
+<br>
+
+### 2.2 Aprendizaje por Refuerzo (Reinforcement Learning)
 
 El Aprendizaje por Refuerzo (RL) constituye un paradigma del aprendizaje automático en el que un agente aprende a mapear situaciones a acciones con el objetivo de maximizar una señal de recompensa numérica acumulada a lo largo del tiempo (Sutton & Barto, 2018). A diferencia del aprendizaje supervisado, donde el sistema recibe ejemplos etiquetados provistos por un supervisor externo, el agente de RL no es instruido sobre qué acciones tomar, sino que debe descubrir cuáles producen mayor recompensa mediante un proceso iterativo de prueba y error (Russell & Norvig, 2010).
 
@@ -51,7 +59,9 @@ El nucleo de nuestro agente es su **política ($\pi$)**, ésta representa la est
 
 Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, se recurre a algoritmos avanzados como Q-Learning, Deep Q-Network (DQN) y Proximal Policy Optimization (PPO).
 
-### Proximal Policy Optimization (PPO)
+<br>
+
+### 2.3 Proximal Policy Optimization (PPO)
 
 Proximal Policy Optimization (PPO) es un algoritmo de aprendizaje por refuerzo encuadrado en los métodos de policy gradient.
 
@@ -67,9 +77,11 @@ $$r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$$
 
 En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que limita el valor de $r_t(\theta)$ dentro de un rango determinado. Este proceso asegura que las actualizaciones sean pequeñas y controladas, manteniendo la nueva política "cerca" de la anterior, garantizando una convergencia más estable y robusta.
 
-### Justificacion
+<br>
 
-#### Nota: Mejorar la redaccion, haciendo uso de parrafos corto y claros. Minimizar el uso de listas
+#### 2.3.1 Justificacion
+
+###### Nota: Mejorar la redaccion, haciendo uso de parrafos corto y claros. Minimizar el uso de listas
 
 Para este proyecto se ha decidido utilizar el algoritmo PPO:
 
@@ -77,9 +89,11 @@ Para este proyecto se ha decidido utilizar el algoritmo PPO:
 - La politica de recorte para que los cambios no sean tan abruptos permiten que las acciones del cluster no oscilen levantando y dando de baja muchos contenedores continuamente
 - Mientras que **DQN** se limita a estimar el valor de una accion, **PPO**, utiliza una arquitectura Actor-Critic, lo cual permite que el agente aprenda no solo a maximizar el rendimiento, sino a reducir la varianza, lo que se traduce en un escalado mucho más predecible y menos errático.
 
-### Modelado Matemático del Entorno Simulado
+<br>
 
-#### Teoría de Colas (M/M/1)
+### 2.4 Modelado Matemático del Entorno Simulado
+
+#### 2.4.1 Teoría de Colas (M/M/1)
 
 Para garantizar que el preentrenamiento del agente en la Fase 1 fuese representativo de un clúster real, las dinámicas de estrés del contenedor se modelaron basándose en la Teoría de Colas, adoptando el modelo M/M/1 (llegadas Markovianas, tiempo de servicio Markoviano, 1 servidor) .
 
@@ -119,7 +133,9 @@ _Donde:_
 
 Esto simuló el desbordamiento del búfer (Queue overflow), manteniendo una tasa de error de 0 mientras ρ<1.0, pero elevándose rápidamente al 100% cuando la tasa de llegada sobrepasó permanentemente la capacidad de servicio del contenedor [3].
 
-#### Simulación del Consumo de Memoria RAM (Ley de Little)
+<br>
+
+#### 2.4.2 Simulación del Consumo de Memoria RAM (Ley de Little)
 
 En los servidores de aplicaciones web modernos, el consumo de memoria volátil (RAM) presenta un comportamiento mixto: un piso de memoria estática requerido por el entorno de ejecución y un consumo dinámico proporcional a la cantidad de conexiones activas que el contenedor debe mantener.
 
@@ -143,12 +159,11 @@ _Donde:_
 
 Esta integración permite que el agente PPO aprenda que un aumento en la utilización ($\rho$) no solo afecta la latencia, sino que dispara exponencialmente el consumo de RAM, permitiéndole anticipar riesgos de saturación o fallos por falta de memoria (_Out of Memory_). En la fase de entrenamiento real, estas métricas se extraen directamente de los _cgroups_ de Docker para validar la precisión del modelo simulado.
 
-# Diseño Experimental
+<br>
 
-- En aquellos casos en donde resulte adecuado, se deberá indicar todo el proceso realizado para la obtención y adecuación del conjunto de datos.
-- Un detalle y justificación de los experimentos realizados a fin de determinar los resultados. Este deberá incluir tablas y/o gráficos que resuman los resultados.
+# 3. Diseño Experimental
 
-## Métricas de Desempeño
+## 3.1 Métricas de Desempeño
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
@@ -206,7 +221,9 @@ $$\text{status}_i = \begin{cases} 1 & \text{si el contenedor recibe tráfico} \\
 
 En el entorno real, el valor se determina a partir del peso asignado por _HAProxy_, un contenedor con peso mayor a $0$ es considerado activo, mientras que un peso igual a $0$ lo marca como inactivo. En el entorno simulado, un contenedor es activo o inactivo sin estados intermedios, omitiendo el caso real en que HAProxy puede mantener un contenedor encendido pero sin asignarle tráfico.
 
-## Herramientas Utilizadas
+<br>
+
+## 3.2 Herramientas Utilizadas
 
 La implementación del sistema integra herramientas encargadas tanto de la gestión de la infraestructura de contenedores, el entrenamiento del agente mediante aprendizaje por refuerzo, y la validación del comportamiento bajo condiciones de carga representativas.
 
@@ -216,11 +233,15 @@ La interfaz entre el agente y la infraestructura fue definida utilizando **Gymna
 
 La integridad de las métricas fue asegurada con **Pydantic**, que valida los esquemas de los modelos `ContainerMetrics` y `AgentAction` antes de que ingresen al pipeline de entrenamiento. Finalmente, la evaluación del agente bajo condiciones realistas se realizó utilizando **Locust** como herramienta de generación de carga para simular patrones de tráfico durante la fase de fine-tuning sobre infraestructura real.
 
-## Proceso de entrenamiento
+<br>
+
+## 3.3 Proceso de entrenamiento
 
 Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos si no que se opto por el uso de datos generados de manera aleatoria para mejorar los resultados del proceso de aprendizaje.
 
-### Generación de datos y entornos de entrenamiento
+<br>
+
+### 3.3.1 Generación de datos y entornos de entrenamiento
 
 Para el desarrollo del agente, se definieron dos fuentes de datos distintas que permitieron una evolución progresiva del aprendizaje:
 
@@ -228,7 +249,9 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 
 - _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
-## Diseño de la función de recompensa
+<br>
+
+## 3.4 Diseño de la función de recompensa
 
 La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en una señal escalar que penaliza los comportamientos indeseables [1]. Se adoptó una función de penalización pura, sin términos positivos, de modo que el agente aprenda a minimizar el daño en lugar de perseguir una recompensa absoluta. Como caso límite, si el número de contenedores activos es cero, la función retorna inmediatamente $R = -200$, garantizando que el vaciado total del cluster sea siempre la peor decisión posible independientemente de cualquier otra señal.
 
@@ -236,17 +259,23 @@ Para el resto de los casos, la recompensa total se compone de tres grupos de pen
 
 $$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) + P_{\text{op}} \right] - \delta$$
 
-### Penalizaciones orientadas al usuario (_user-facing_)
+<br>
+
+### 3.4.1 Penalizaciones orientadas al usuario (_user-facing_)
 
 Los errores HTTP y la latencia de respuesta son las únicas métricas que el cliente percibe directamente, por lo que reciben las penalizaciones más severas.
 
 Los errores HTTP 5xx reciben el mayor peso ($W_{\text{err}} = 50.0$): una respuesta fallida representa una degradación crítica e irrecuperable del servicio desde la perspectiva del usuario. La latencia se penaliza con $W_{\text{lat}} = 2.0$ aplicado cuadráticamente sobre el promedio normalizado, lo que hace al agente progresivamente más sensible a los picos. Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia promedio no supera el 10% del timeout máximo ($\overline{\text{lat}} \leq 0.1$), la penalización se anula completamente, definiendo implícitamente el nivel de SLA del sistema.
 
-### Penalizaciones orientadas al operador (_operator-facing_)
+<br>
+
+### 3.4.2 Penalizaciones orientadas al operador (_operator-facing_)
 
 El costo operativo penaliza el sobreaprovisionamiento en función de la fracción de nodos activos sobre el total disponible ($W_{\text{cost}} = 1.0$), desincentivando mantener contenedores encendidos sin necesidad. La saturación de recursos penaliza el exceso de uso de CPU por encima del 80% y de RAM por encima del 85%, acumulando únicamente la diferencia que sobrepasa esos umbrales ($W_{\text{sat}} = 1.0$ para ambos). Estos pesos unitarios permiten que ambas señales actúen como guías de fondo sin solaparse con las penalizaciones de calidad de servicio.
 
-### Zona muerta de CPU y penalización adaptativa ($P_{\text{op}}$)
+<br>
+
+### 3.4.3 Zona muerta de CPU y penalización adaptativa ($P_{\text{op}}$)
 
 El término $P_{\text{op}}$ implementa una zona muerta que define el rango operativo eficiente del cluster. Si el uso promedio de CPU de los nodos activos cae entre el 40% y el 75%, no se aplica penalización adicional, ya que el cluster opera con el nivel de ocupación deseado. Fuera de ese rango, la penalización adopta dos formas distintas según la dirección de la desviación:
 
@@ -254,7 +283,9 @@ $$P_{\text{op}} = \begin{cases} W_{\text{op}} \cdot (0.40 - \overline{\text{cpu}
 
 Cuando la CPU promedio está por debajo del 40%, la penalización escala con la cantidad de nodos activos ($W_{\text{op}} = 2.0$), castigando proporcionalmente más al agente cuanto más contenedores ociosos mantiene encendidos. Cuando supera el 75%, se aplica una penalización preventiva suave ($W_{\text{prev}} = 2.0$) que incentiva al agente a escalar anticipadamente antes de que el sistema colapse, en lugar de reaccionar recién cuando la saturación y los errores ya son visibles.
 
-### Fricción de escalado ($\delta$)
+<br>
+
+### 3.4.4 Fricción de escalado ($\delta$)
 
 El término $\delta$ penaliza cada decisión de escalar en los extremos del espacio de acción:
 
@@ -262,9 +293,11 @@ $$\delta = \begin{cases} W_{\text{friction}} & \text{si } a_{\text{scale}} \leq 
 
 Con $W_{\text{friction}} = 2.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada acción de escalar con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de _chattering_ (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
 
-## Infraestructura de Telemetría y Monitoreo
+<br>
 
-### Arquitectura General del Sistema
+## 3.5 Infraestructura de Telemetría y Monitoreo
+
+### 3.5.1 Arquitectura General del Sistema
 
 El sistema se organiza en cuatro capas que operan de forma coordinada durante el entrenamiento y la evaluación del agente. Cada capa tiene una responsabilidad bien delimitada, y la comunicación entre ellas se realiza a través de interfaces explícitas que permiten reemplazar o extender cualquier componente sin afectar al resto.
 
@@ -304,9 +337,9 @@ Locust genera el tráfico HTTP que estresa el cluster durante la fase de entrena
 
 El número de usuarios activos en cada momento se reporta al Bridge mediante un POST al endpoint `/workload`, que normaliza el valor y lo incluye en el vector de observación como una señal adicional de contexto. Esto le da al agente información anticipatoria sobre la carga actual antes de que sus efectos sean visibles en las métricas de CPU y latencia.
 
----
+<br>
 
-### Infraestructura de Telemetría
+### 3.5.2 Infraestructura de Telemetría
 
 La recolección de métricas en tiempo real constituye la columna vertebral del sistema, ya que la calidad de la señal de observación determina directamente la capacidad del agente para tomar decisiones correctas. Para satisfacer los requisitos de baja latencia y alta frecuencia de muestreo que impone el ciclo de entrenamiento del PPO, se diseñó una infraestructura de telemetría en tres capas, cada una especializada según el origen y la naturaleza del dato que expone.
 
@@ -341,25 +374,79 @@ El socket se instancia, utiliza y cierra en cada llamada de forma explícita. Ma
 
 Dado que el sistema gestiona `n_max` contenedores en paralelo, una recolección secuencial implicaría que el tiempo total de un paso del entorno crecería linealmente con el número de nodos. Para evitar este problema, la función `get_metrics()` lanza un `ThreadPoolExecutor` con tantos workers como contenedores activos, ejecutando en paralelo la recolección de cgroups y red para cada nodo. Los resultados se escriben en sus posiciones exactas dentro de la lista de salida a medida que cada hilo completa su trabajo, garantizando el orden correcto sin necesidad de sincronización adicional, mientras la recolección de métricas HAProxy se realiza una única vez antes de lanzar el pool y se pasa como argumento compartido a todos los workers.
 
-# Análisis y discusión de resultados
+<br>
 
-## Resultados de la Optimización (Hiperparámetros)
+# 4. Análisis y discusión de resultados
 
-### Analisis de Importancia y Coorelacion
+En la siguiente sección se presentan los resultados obtenidos. Se realizó un apartado de optimizaición de hiperparámetros, donde se muestran los resultados obtenidos a través de gráficos y tablas. Luego se muestra la evaluación del escalamiento del agente, analizando su comportamiento ante el aumento de la complejidad del entorno y las métricas de desempeño del cluster. Finalmente, se realiza una comparativa contra baselines de la industria, incluyendo umbrales clásicos y un controlador PID, para resumir los resultados obtenidos.
 
-(va imagen de correlacion entre las metricas y la recompensa)
+<br>
 
-### Estudio de convergencia
+## 4.1 Resultados de la Optimización (Hiperparámetros)
 
-(va grafico de las lineas agrupadas)
+Para la optimizacion de hiperparámetros se decidió utilizar la herramienta de [**Weights & Biases Sweeps**](https://wandb.ai/site/sweeps/) , la cual permite automatizar la busqueda de hiperparámetros a través de la ejecución de múltiples experimentos en paralelo, utilizando diferentes combinaciones de valores para los hiperparámetros definidos. El método de búsqueda seleccionado en dicho estudio fue la `Optimización Bayesiana`, la cual utiliza modelos probabilisticos para guiar la búsqueda, "aprendiendo" de las corridas anteriores. Si nota que ciertos rangos de hiperparámetros están produciendo mejores resultados, el algoritmo se enfoca en explorar más a fondo esas áreas del espacio de búsqueda, lo que puede conducir a una convergencia más rápida hacia los hiperparámetros óptimos.
 
-### Justificacion de la estabilidad
+Se realizó la busqueda de hiperparametros a través de una serie de barridos con la optimización bayesiana sobre el espacio de hiperparámetros definido, utilizando un total de 30 ejecuciones (runs) con 10 nodos (`n_max = 10`) con diferentes combinaciones de hiperparámetros con la metrica objetivo siendo la recompensa media obtenida por episodio (`rollout/ep_rew_mean`). A continuación se presentan los hiperparametros a investigar y los rango otorgados para cada uno:
 
-(clip_range)
+| Hiperparámetro [8]    | Descripción [8]                                                                                                       | Rango de Búsqueda / Valores            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `learning_rate`       | Tamaño de paso para la actualización de pesos.                                                                        | Distribución log-uniforme [1e-5, 3e-3] |
+| `gamma`               | Factor de descuento para recompensas futuras.                                                                         | Rango continuo [0.85, 0.999]           |
+| `n_steps`             | Número de pasos ejecutados por entorno en cada actualización (tamaño de _rollout_).                                   | [128, 256, 512, 1024, 2048]            |
+| `batch_size`          | Número de muestras por actualización de gradiente.                                                                    | [64, 128, 256]                         |
+| `n_epochs`            | Número de veces que se reutilizan los datos recolectados durante una actualización.                                   | [3, 6, 10, 15, 20]                     |
+| `clip_range`          | Parámetro de recorte (ε) para el objetivo sustituto; asegura que los cambios en la política sean pequeños.            | [0.1, 0.2, 0.3]                        |
+| `ent_coef`            | Coeficiente de entropía (c2); valores más altos fomentan una mayor exploración.                                       | [0.0, 0.0001, 0.001, 0.01]             |
+| `vf_coef`             | Coeficiente de la función de valor (c1); peso de la pérdida de valor en la función de pérdida total.                  | [0.5, 0.75, 1.0]                       |
+| `gae_lambda`          | Factor de compensación entre sesgo y varianza para la Estimación de Ventaja Generalizada (λ_GAE).                     | Rango continuo [0.9, 1.0]              |
+| `target_kl`           | Límite de divergencia KL entre actualizaciones para detener el entrenamiento temprano si los cambios son muy grandes. | Rango continuo [0.003, 0.03]           |
+| `normalize_advantage` | Normalización de las ventajas.                                                                                        | [True, False]                          |
 
-### Justificacion de la seleccion de Hiperparametros
+<br>
 
-(va grafico coordenadas paralelas)
+### 4.1.1 Análisis de Importancia y Correlacion
+
+![1_ranked_runs](../resultados_graficos/sweep_analysis/1_ranked_runs.png)
+
+La gráfica 4.1 muestra la distribución de las recompensas medias obtenidas por episodio para cada una de las 30 ejecuciones realizadas durante el sweep de optimización de hiperparámetros. Cada barra representa una ejecución con una combinación específica de hiperparámetros, ordenada por rendimiento siendo la primera la de mejor desempeño. Se observa que 22 de las 30 ejecuciones alcanzaron una recompensa por encima de la media de -1349 puntos, lo que indica que se logró concentrar la exploración en regiones prometedeoras del espacio de busqueda luego de las primeras corridas. Sin embargo, la dispersión entre la mejor corrida (-443), el promedio de las corridas (-1349) y la peor corrida (-5500) sugiere que el espacio de hiperparámetros es altamente sensible, y que pequeñas variaciones pueden tener un impacto significativo en el desempeño del agente.
+
+<br>
+
+![3_correlations](../resultados_graficos/sweep_analysis/3_correlations.png)
+
+La gráfica 4.2 muestra la correlación de Pearson entre cada hiperparámetro y la recompensa media final por episodio. Cada barra representa el coeficiente de correlación, que varía entre -1 (correlación negativa perfecta) y 1 (correlación positiva perfecta). Se observa que `batch_size` tiene la mayor correlación negativa (r = - 0.361), lo que sugiere que lotes más grandes perjudican el aprendizaje. Lo cual es consistente con lo estudido en RL, donde lotes más pequeños generan actualizaciones de política más frecuentes y con mayor varianza, lo que puede ayudar a escapar de óptimos locales. El hiperparametro `gamma` (factor de descuento gamma) presenta la segunda mayor correlación negativa (r = -0.317), lo que indica que valores altos de gamma hacen que el agente valore demasiado las recompensas futuras, lo cual en un entorno tan dinámico y con señales ruidosas puede dificultar la convergencia.
+
+En sentido opuesto, `n_steps` es el único hiperparametro con una correlación positiva significativa (r = 3.05), lo que nos dice que realizar más pasos por actualizacion, es decir, recolectar más experiencia antes de actualizar la política, tiende a mejorar el desempeño. Dicha experíencia es valiosa en tal ambiente donde un aumento o disminución de contenedores o variacion de carga puede tener efectos que se manifiestan con cierto retardo, por lo que acumular más pasos permite al agente captar mejor la relación entre sus acciones y las consecuencias a medio y largo plazo.
+
+El resto de los hiperparámetros (`clip_range`, `n_epochs`, `vf_coef`, `ent_coef`, `gae_lambda`) muestran correlaciones débiles, lo que indica que su influencia individual es menor o que sus efectos dependen fuertemente de la combinación con los demás parámetros.
+
+![2_scatter_grid](../resultados_graficos/sweep_analysis/2_scatter_grid.png)
+
+En la gráfica 4.3 se presenta una matriz de gráficos de dispersión que muestra la relación entre cada hiperparámetro y la recompensa media final por episodio. Cada punto representa una ejecución del sweep, con su color indicando la recompensa obtenida (de rojo para las peores recompensas a verde para las mejores y con una estrella para la mejor). En el panel de `batch_size`, practicamente todos los puntos ubicados en la franja superior (reward [-800, -1000]) corresponden a ejecuciones con `batch_size = 64`. Para `gamma`, se observa que las mejores recompensas se concentran en el rango inferior (gamma [0.85, 0.95]), mientras que valores más altos de gamma tienden a agruparse en la franja de recompensas más bajas (reward [-1000, -3000]). En el caso de `n_steps`, se aprecia que los valores más altos (`n_steps` [1024, 2048]) dan recompensas mejores con mayor frecuencia, con menor dispersión, mientras que los valores más bajos (`n_steps` [128, 256]) presentan una mayor variabilidad y una concentración de recompensas más bajas.
+
+Es importante destacar que aunque se observa ciertas leves correlaciones lineales entre algunas variables, los hiperparamentros pueden no poseer relaciones estrictamente lineales con la recompensa, y generar efectos que no se capturan completamente en estos gráficos.
+
+### 4.1.2 Estudio de Convergencia
+
+![6_learning_curves_top5](../resultados_graficos/sweep_analysis/6_learning_curves_top5.png)
+
+En el gráfico 4.4 se presentan las curvas de aprendizaje de las cinco mejores ejecuciones. Cada curva muestra la recompensa media a lo largo de las iteraciones de entramiento. Vemos una la corrida #5 (línea violeta) es la primera que llega a converger pero alrededor de los 25.000 pasos exhibe un comportamiento único del grupo, con una caída abrupta de la recompensa a valores cercanos a -2000, seguida de una recuperación que la lleva a converger a niveles similares de las corridas #2, #3 y #4. Este comportamiento puede ser provocado por una actualizacion demasiado agresiva, debido a una tasa de aprendizaje (`learning_rate`) alta en combinación con un horizonte de recolección corto (`n_steps`).
+
+Las corridas #2 y #3 muestran trayectorias similares entre sí. Ambas tienen un aprendizaje rápido en los primeros 25.000 pasos, luego una mejora más gradual hasta los 75.000 pasos donde se estabilizan teniendo una última mejora en los 100.000 y 125.000 pasos respectivamente, convergiendo a -729 y -733. Se ven distintos picos y caidas a lo largo de ambos entrenamientos pero siendo estas menos abruptas que la anterior, lo que indica que poseen tasas de entrenamiento más estables que les permitieron salir de óptimos locales.
+
+La corrida #4 converge a los 25.000 pasos, pero a un nivel de recompensa más bajo (-737), y muestra una curva más plana con menos mejoras significativas a lo largo del entrenamiento, lo que indica que el agente pudo haber quedado atrapado en un óptimo local subóptimo.
+
+En la mejor corrida se ve que converge antes que el resto, a los 25.000 pasos ya alcanza una rcompensa de aproximadamente -800, y continúa mejorando hasta estabilizarse en -443 hacía los 50.000 pasos. La brecha de 300 puntos entre la mejor corrida y el segundo grupo (#2, #3, #4) sugiere que la combinación de hiperparámetros utilizada corresponde a configuraciones notablemente distintas.
+
+### 4.1.3 Justificación de la selección final de hiperparámetros
+
+![4_parallel_coordinates](../resultados_graficos/sweep_analysis/4_parallel_coordinates.png)
+
+El gráfico de coordenadas paralelas (gráfica 4.5) coloreado por recompensa permite visualizar la "firma" de las corridas exitosas a lo largo de todos los hiperparámetros simultáneamente. La línea correspondiente a la corrida ganadora (trazo oscuro y grueso) sigue un patrón identificable: `batch_size` mínimo (64), `learning_rate` muy bajo (~5e-5), `clip_range` máximo (0.3), `gamma` bajo (~0.88), `n_epochs` máximo (20) y `ent_coef` prácticamente nulo. Las líneas de colores verdes claros y amarillas (corridas mediocres) comparten varias de estas características pero divergen en gamma alto o tasa de aprendizaje elevada, lo que sugiere que la combinación simultánea de gamma bajo, lr bajo y muchas épocas de optimización es la condición necesaria para alcanzar el desempeño superior.
+
+![5_top5_table](../resultados_graficos/sweep_analysis/5_top5_table.png)
+
+La tabla 4.6 muestra los cinco mejores runs y los valores de sus hiperparámetros. Esto confirma un patrón compartido entre ellos: todos utilizan `batch_size = 64`, todos emplean `clip_range` de 0.2 o 0.3, y los cuatro mejores seleccionan `n_epochs` de 6 o 20. Sin embargo, la corrida ganadora se distingue del grupo por su tasa de aprendizaje (`learning_rate`) considerablemente menor (4.93e-5 frente a valores entre 5.91e-4 y 2.50e-3 en las demás) y por su `gamma` más bajo (0.8827). Esta combinación de aprendizaje lento con muchas épocas de optimización por rollout le permite al agente extraer mayor información de cada lote de experiencias sin arriesgarse a saltar fuera de regiones prometedoras del espacio de políticas. En base a este análisis, los hiperparámetros de la **corrida mpq9xes3** fueron seleccionados para el entrenamiento definitivo de la Fase 1.
 
 ## Evaluación del escalamiento (Runs: 3,5,10,20 nodos)
 
@@ -396,3 +483,5 @@ Observaciones finales sobre el tema y es muy importante indicar aquellas tareas 
 \[6] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
 
 \[7] https://docs.docker.com/engine/containers/runmetrics/#tips-for-high-performance-metric-collection
+
+\[8] https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html#hyperparameters
