@@ -39,11 +39,12 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     # Target: Mantener la CPU promedio al 60% (0.60)
     pid = PIDController(kp=1.5, ki=0.1, kd=0.5, setpoint=0.60)
     
-    hist_cpu_total = [] 
-    hist_ram_total = [] 
-    hist_latency = []   
+    hist_reward = []
+    hist_cpu_total = []
+    hist_ram_total = []
+    hist_latency = []
     hist_errors = []
-    hist_workload = [] 
+    hist_workload = []
     hist_activos = []
 
      # metricas
@@ -108,7 +109,8 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
         action = np.array(weights + [scale_decision], dtype=np.float32)
         
         obs, reward, terminated, truncated, info = env.step(action)
-        
+        hist_reward.append(reward)
+
         if terminated or truncated:
             break
     
@@ -122,13 +124,18 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
   
     mode_tag = "sim" if simulated else "real"
     formatted_file = f"test_pid_{mode_tag}_n{n_max}_i{steps}_{file}"
-    os.makedirs("./training_results/testing_results", exist_ok=True)
-    save_path = os.path.join("./training_results/testing_results", formatted_file)
+    save_dir = f"./training_results/testing_results_{n_max}_nodes"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, formatted_file)
     pd.DataFrame({
-        'cpu_promedio': hist_cpu_total,
-        'ram_promedio': hist_ram_total,
-        'latencia_promedio': hist_latency,
-        'tasa_errores': hist_errors
+        'step': range(total_steps),
+        'reward': hist_reward,
+        'cpu_mean': hist_cpu_total,
+        'ram_mean': hist_ram_total,
+        'latency_mean': hist_latency,
+        'error_mean': hist_errors,
+        'workload': [w / 4000 for w in hist_workload],
+        'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del PID guardadas en: {save_path}")
 

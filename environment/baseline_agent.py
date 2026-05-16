@@ -15,11 +15,12 @@ def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_met
     CPU_THRESHOLD_UP = 0.75   # Escalar si CPU > 75%
     CPU_THRESHOLD_DOWN = 0.25 # Desescalar si CPU < 25%
     
-    hist_cpu_total = [] 
-    hist_ram_total = [] 
-    hist_latency = []   
+    hist_reward = []
+    hist_cpu_total = []
+    hist_ram_total = []
+    hist_latency = []
     hist_errors = []
-    hist_workload = [] 
+    hist_workload = []
     hist_activos = []
 
      # metricas
@@ -87,7 +88,8 @@ def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_met
         
         # Ejecutar acción
         obs, reward, terminated, truncated, info = env.step(action)
-        
+        hist_reward.append(reward)
+
         if terminated or truncated:
             break
     
@@ -101,13 +103,18 @@ def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_met
         
     mode_tag = "sim" if simulated else "real"
     formatted_file = f"test_bai_{mode_tag}_n{n_max}_i{steps}_{file}"
-    os.makedirs("./training_results/testing_results", exist_ok=True)
-    save_path = os.path.join("./training_results/testing_results", formatted_file)
+    save_dir = f"./training_results/testing_results_{n_max}_nodes"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, formatted_file)
     pd.DataFrame({
-        'cpu_promedio': hist_cpu_total,
-        'ram_promedio': hist_ram_total,
-        'latencia_promedio': hist_latency,
-        'tasa_errores': hist_errors
+        'step': range(total_steps),
+        'reward': hist_reward,
+        'cpu_mean': hist_cpu_total,
+        'ram_mean': hist_ram_total,
+        'latency_mean': hist_latency,
+        'error_mean': hist_errors,
+        'workload': [w / 4000 for w in hist_workload],
+        'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del BAI guardadas en: {save_path}")
 
