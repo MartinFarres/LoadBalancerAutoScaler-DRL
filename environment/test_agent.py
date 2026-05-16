@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 
-def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
-    
+def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulated=True):
+
     np.set_printoptions(precision=2, suppress=True, linewidth=120)
-    
-    env = LoadBalancerEnv(simulated=True, max_steps=iterations, n_max=nodes, testing=True)
+
+    env = LoadBalancerEnv(simulated=simulated, max_steps=iterations, n_max=nodes, testing=True)
 
     print("Loading trained agent...")
     
@@ -23,12 +23,13 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     print(f"| {'Step':^6} | {'Nodos':^7} | {'Scale Action':^14} | {'Reward':^9} | {'Pesos de Ruteo (HAProxy)':^45} |")
     print("-" * 110)
     
-    # listas 
-    hist_cpu_total = [] 
-    hist_ram_total = [] 
-    hist_latency = []   
-    hist_errors = [] 
-    hist_workload = [] 
+    # listas
+    hist_reward = []
+    hist_cpu_total = []
+    hist_ram_total = []
+    hist_latency = []
+    hist_errors = []
+    hist_workload = []
     hist_activos = []
 
     # metricas
@@ -41,10 +42,12 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
         obs, reward, terminated, truncated, info = env.step(action)
         
         activos = info['activos']
-        workload = info['workload'] * 4000 # Desnormalizamos -> asumiendo 4000 total_users
-        
-        
-        # Conteo de eventos de escalado 
+        workload_norm = info['workload']
+        workload = workload_norm * 4000  # Desnormalizamos -> asumiendo 4000 total_users
+
+        hist_reward.append(reward)
+
+        # Conteo de eventos de escalado
         if i > 0 and activos != last_activos:
             scaling_events += 1
         last_activos = activos
@@ -88,14 +91,20 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv'):
     avg_cost_efficiency = np.mean(cost_efficiencies)
     
     # Guardar a CSV
-    formatted_file = f"test_ppo_{nodes}_nodes_i{iterations}_{file}"
-    os.makedirs(f"./training_results/testing_results_{nodes}_nodes", exist_ok=True)
-    save_path = os.path.join(f"./training_results/testing_results_{nodes}_nodes", formatted_file)
+    mode_tag = "sim" if simulated else "real"
+    formatted_file = f"test_ppo_{mode_tag}_{nodes}_nodes_i{iterations}_{file}"
+    save_dir = f"./training_results/testing_results_{nodes}_nodes"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, formatted_file)
     pd.DataFrame({
-        'cpu_promedio': hist_cpu_total,
-        'ram_promedio': hist_ram_total,
-        'latencia_promedio': hist_latency,
-        'tasa_errores': hist_errors
+        'step': range(total_steps),
+        'reward': hist_reward,
+        'cpu_mean': hist_cpu_total,
+        'ram_mean': hist_ram_total,
+        'latency_mean': hist_latency,
+        'error_mean': hist_errors,
+        'workload': [w / 4000 for w in hist_workload],
+        'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del test guardadas en: {save_path}")
 
@@ -119,6 +128,7 @@ if __name__ == "__main__":
     parser.add_argument('--nodes', type=int, default=5)
     parser.add_argument('--file', type=str, default='testing_metrics.csv')
     parser.add_argument('--iterations', type=int, default=5000)
+    parser.add_argument('--simulated', action='store_true', default=False)
     args = parser.parse_args()
 
-    run_test_agent(nodes=args.nodes, iterations=args.iterations, file=args.file)
+    run_test_agent(nodes=args.nodes, iterations=args.iterations, file=args.file, simulated=args.simulated)
