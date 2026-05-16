@@ -402,17 +402,20 @@ Se realizó la busqueda de hiperparametros a través de una serie de barridos co
 | `target_kl`           | Límite de divergencia KL entre actualizaciones para detener el entrenamiento temprano si los cambios son muy grandes. | Rango continuo [0.003, 0.03]           |
 | `normalize_advantage` | Normalización de las ventajas.                                                                                        | [True, False]                          |
 
+_Tabla 4.1: Definición del espacio de búsqueda de hiperparámetros._
 <br>
 
 ### 4.1.1 Análisis de Importancia y Correlacion
 
 ![1_ranked_runs](../resultados_graficos/sweep_analysis/1_ranked_runs.png)
+_Figura 4.1: Clasificación de ejecuciones por recompensa final._
 
 La gráfica 4.1 muestra la distribución de las recompensas medias obtenidas por episodio para cada una de las 30 ejecuciones realizadas durante el sweep de optimización de hiperparámetros. Cada barra representa una ejecución con una combinación específica de hiperparámetros, ordenada por rendimiento siendo la primera la de mejor desempeño. Se observa que 22 de las 30 ejecuciones alcanzaron una recompensa por encima de la media de -1349 puntos, lo que indica que se logró concentrar la exploración en regiones prometedeoras del espacio de busqueda luego de las primeras corridas. Sin embargo, la dispersión entre la mejor corrida (-443), el promedio de las corridas (-1349) y la peor corrida (-5500) sugiere que el espacio de hiperparámetros es altamente sensible, y que pequeñas variaciones pueden tener un impacto significativo en el desempeño del agente.
 
 <br>
 
 ![3_correlations](../resultados_graficos/sweep_analysis/3_correlations.png)
+_Figura 4.2: Correlación de Pearson entre hiperparámetros y la recompensa media._
 
 La gráfica 4.2 muestra la correlación de Pearson entre cada hiperparámetro y la recompensa media final por episodio. Cada barra representa el coeficiente de correlación, que varía entre -1 (correlación negativa perfecta) y 1 (correlación positiva perfecta). Se observa que `batch_size` tiene la mayor correlación negativa (r = - 0.361), lo que sugiere que lotes más grandes perjudican el aprendizaje. Lo cual es consistente con lo estudido en RL, donde lotes más pequeños generan actualizaciones de política más frecuentes y con mayor varianza, lo que puede ayudar a escapar de óptimos locales. El hiperparametro `gamma` (factor de descuento gamma) presenta la segunda mayor correlación negativa (r = -0.317), lo que indica que valores altos de gamma hacen que el agente valore demasiado las recompensas futuras, lo cual en un entorno tan dinámico y con señales ruidosas puede dificultar la convergencia.
 
@@ -421,14 +424,18 @@ En sentido opuesto, `n_steps` es el único hiperparametro con una correlación p
 El resto de los hiperparámetros (`clip_range`, `n_epochs`, `vf_coef`, `ent_coef`, `gae_lambda`) muestran correlaciones débiles, lo que indica que su influencia individual es menor o que sus efectos dependen fuertemente de la combinación con los demás parámetros.
 
 ![2_scatter_grid](../resultados_graficos/sweep_analysis/2_scatter_grid.png)
+_Figura 4.3: Dispersión de la recompensa media en función de hiperparámetros individuales._
 
 En la gráfica 4.3 se presenta una matriz de gráficos de dispersión que muestra la relación entre cada hiperparámetro y la recompensa media final por episodio. Cada punto representa una ejecución del sweep, con su color indicando la recompensa obtenida (de rojo para las peores recompensas a verde para las mejores y con una estrella para la mejor). En el panel de `batch_size`, practicamente todos los puntos ubicados en la franja superior (reward [-800, -1000]) corresponden a ejecuciones con `batch_size = 64`. Para `gamma`, se observa que las mejores recompensas se concentran en el rango inferior (gamma [0.85, 0.95]), mientras que valores más altos de gamma tienden a agruparse en la franja de recompensas más bajas (reward [-1000, -3000]). En el caso de `n_steps`, se aprecia que los valores más altos (`n_steps` [1024, 2048]) dan recompensas mejores con mayor frecuencia, con menor dispersión, mientras que los valores más bajos (`n_steps` [128, 256]) presentan una mayor variabilidad y una concentración de recompensas más bajas.
 
 Es importante destacar que aunque se observa ciertas leves correlaciones lineales entre algunas variables, los hiperparamentros pueden no poseer relaciones estrictamente lineales con la recompensa, y generar efectos que no se capturan completamente en estos gráficos.
 
+<br>
+
 ### 4.1.2 Estudio de Convergencia
 
 ![6_learning_curves_top5](../resultados_graficos/sweep_analysis/6_learning_curves_top5.png)
+_Figura 4.4: Curvas de aprendizaje de las 5 mejores ejecuciones._
 
 En el gráfico 4.4 se presentan las curvas de aprendizaje de las cinco mejores ejecuciones. Cada curva muestra la recompensa media a lo largo de las iteraciones de entramiento. Vemos una la corrida #5 (línea violeta) es la primera que llega a converger pero alrededor de los 25.000 pasos exhibe un comportamiento único del grupo, con una caída abrupta de la recompensa a valores cercanos a -2000, seguida de una recuperación que la lleva a converger a niveles similares de las corridas #2, #3 y #4. Este comportamiento puede ser provocado por una actualizacion demasiado agresiva, debido a una tasa de aprendizaje (`learning_rate`) alta en combinación con un horizonte de recolección corto (`n_steps`).
 
@@ -438,15 +445,21 @@ La corrida #4 converge a los 25.000 pasos, pero a un nivel de recompensa más ba
 
 En la mejor corrida se ve que converge antes que el resto, a los 25.000 pasos ya alcanza una rcompensa de aproximadamente -800, y continúa mejorando hasta estabilizarse en -443 hacía los 50.000 pasos. La brecha de 300 puntos entre la mejor corrida y el segundo grupo (#2, #3, #4) sugiere que la combinación de hiperparámetros utilizada corresponde a configuraciones notablemente distintas.
 
+<br>
+
 ### 4.1.3 Justificación de la selección final de hiperparámetros
 
 ![4_parallel_coordinates](../resultados_graficos/sweep_analysis/4_parallel_coordinates.png)
+_Figura 4.5: Coordenadas paralelas de hiperparámetros._
 
 El gráfico de coordenadas paralelas (gráfica 4.5) coloreado por recompensa permite visualizar la "firma" de las corridas exitosas a lo largo de todos los hiperparámetros simultáneamente. La línea correspondiente a la corrida ganadora (trazo oscuro y grueso) sigue un patrón identificable: `batch_size` mínimo (64), `learning_rate` muy bajo (~5e-5), `clip_range` máximo (0.3), `gamma` bajo (~0.88), `n_epochs` máximo (20) y `ent_coef` prácticamente nulo. Las líneas de colores verdes claros y amarillas (corridas mediocres) comparten varias de estas características pero divergen en gamma alto o tasa de aprendizaje elevada, lo que sugiere que la combinación simultánea de gamma bajo, lr bajo y muchas épocas de optimización es la condición necesaria para alcanzar el desempeño superior.
 
 ![5_top5_table](../resultados_graficos/sweep_analysis/5_top5_table.png)
+_Figura 4.6: Resumen de hiperparámetros para las 5 mejores ejecuciones._
 
 La tabla 4.6 muestra los cinco mejores runs y los valores de sus hiperparámetros. Esto confirma un patrón compartido entre ellos: todos utilizan `batch_size = 64`, todos emplean `clip_range` de 0.2 o 0.3, y los cuatro mejores seleccionan `n_epochs` de 6 o 20. Sin embargo, la corrida ganadora se distingue del grupo por su tasa de aprendizaje (`learning_rate`) considerablemente menor (4.93e-5 frente a valores entre 5.91e-4 y 2.50e-3 en las demás) y por su `gamma` más bajo (0.8827). Esta combinación de aprendizaje lento con muchas épocas de optimización por rollout le permite al agente extraer mayor información de cada lote de experiencias sin arriesgarse a saltar fuera de regiones prometedoras del espacio de políticas. En base a este análisis, los hiperparámetros de la **corrida mpq9xes3** fueron seleccionados para el entrenamiento definitivo de la Fase 1.
+
+<br>
 
 ## Evaluación del escalamiento (Runs: 3,5,10,20 nodos)
 
