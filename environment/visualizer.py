@@ -54,35 +54,40 @@ class Visualizer:
         except Exception as e:
             print(f"Error generando curva de aprendizaje: {e}")
 
-    def generate_testing_summary_table(self, cpu_history, ram_history, latency_history, errors_history, high_latency_threshold=0.8):
+    def generate_testing_summary_table(self, cpu_history, ram_history, latency_history, errors_history, scaling_events=0, sla_violation_pct=0.0, avg_cost_efficiency=0.0, high_latency_threshold=0.8):
         """
         Genera una tabla resumen guardada como imagen con las métricas 
         """
-        # metricas
         total_failed_requests = sum(errors_history)
-        avg_cpu = np.mean(cpu_history) * 100  # Convertido a %
-        avg_ram = np.mean(ram_history) * 100  # Convertido a %
-        
-        # Eventos de alta latencia  ( latencia > 80% )
-        high_latency_events = sum(1 for lat in latency_history if lat >= high_latency_threshold)
+        avg_cpu = np.mean(cpu_history) * 100 
+        avg_ram = np.mean(ram_history) * 100 
 
         # Preparar datos
         cell_text = [
             [f"{int(total_failed_requests)}"],
             [f"{avg_cpu:.2f}%"],
             [f"{avg_ram:.2f}%"],
-            [f"{high_latency_events}"]
+            [f"{scaling_events}"],                    
+            [f"{sla_violation_pct:.2f}%"],            
+            [f"{avg_cost_efficiency:.1f} usr/nodo"]   
         ]
         
-        rows = ['Failed Requests (Total)', 'Average CPU Usage', 'Average Memory Usage', 'High Latency Events']
+        rows = [
+            'Failed Requests (Total)', 
+            'Average CPU Usage', 
+            'Average Memory Usage', 
+            'Scaling Events (Chattering)', 
+            'SLA Violations (>1000ms)', 
+            'Cost Efficiency'
+        ]
 
-        fig, ax = plt.subplots(figsize=(8, 3))
+        # Se aumenta de 3 a 4.5 el alto de la figura para que entren las nuevas filas cómodamente
+        fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.axis('tight')
         ax.axis('off')
 
         table = ax.table(cellText=cell_text, rowLabels=rows, colLabels=['Valor Obtenido'], loc='center', cellLoc='center')
         
-        # Estilos
         table.auto_set_font_size(False)
         table.set_fontsize(12)
         table.scale(1.2, 2)

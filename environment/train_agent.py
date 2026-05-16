@@ -38,7 +38,8 @@ def linear_schedule(initial_value: float) -> Callable[[float], float]:
 
 
 directory_logs = "./logs_tensorboard/"
-MODEL_PATH = "ppo_lb_simulated_base"
+def model_path(nodes):
+    return f"ppo_lb_simulated_base_{nodes}_nodes"
 
 def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.csv"):
     print(f"Iniciando entrenamiento en Simulacion Pura para {iterations} pasos con {nodes} nodos...")
@@ -57,46 +58,45 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: a616rj5a)
-    # reward=-149 vs. promedio de -715 en los otros 39 runs
+    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: mpq9xes3)
+    # reward=-443 vs. promedio de -1072 en los otros 29 runs
     model = PPO("MlpPolicy",
             env_sim,
             verbose=1,
             n_steps=1024,
-            batch_size=256,
-            learning_rate=linear_schedule(0.0005), #0.00119),
+            batch_size=64,
+            learning_rate=linear_schedule(4.930518166008548e-05),
             clip_range=0.3,
-            vf_coef=0.75,
-            gamma= 0.92, #0.878,
+            vf_coef=0.5,
+            gamma=0.8827372114196713,
             ent_coef=0.0001,
-            gae_lambda=0.976,
-            n_epochs=10, #15,
-            target_kl= 0.03,#0.017,
+            gae_lambda=0.9169007884238056,
+            n_epochs=20,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
             device='cpu')
 
-    metrics_callback = TrainingMetricsCallback(save_dir="./training_results/phase1", file_name=file)
+    metrics_callback = TrainingMetricsCallback(save_dir=f"./training_results/phase1_{nodes}_nodes", file_name=file)
     
     workload_callback = WorkloadBehaviorCallback(
         total_timesteps=iterations,
-        save_dir="./training_results/phase1",
+        save_dir=f"./training_results/phase1_{nodes}_nodes",
         file_name="workload_behavior.csv"
     )
 
     model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase1_Simulated", callback=[metrics_callback, workload_callback]) 
 
-    env_sim.save(f"./training_results/phase1/vec_normalize_phase1.pkl")
-    model.save(MODEL_PATH)
+    env_sim.save(f"./training_results/phase1_{nodes}_nodes/vec_normalize_phase1.pkl")
+    model.save(model_path(nodes))
     print("Fase 1 completada. Conocimiento base guardado.\n")
 
     print("Generando curva de aprendizaje para Fase 1...")
-    viz = Visualizer(save_dir="./resultados_graficos/phase1")
-    viz.plot_learning_curve(f"./training_results/phase1/{file}")
+    viz = Visualizer(save_dir=f"./resultados_graficos/phase1_{nodes}_nodes")
+    viz.plot_learning_curve(f"./training_results/phase1_{nodes}_nodes/{file}")
     
     print("Generando gráficos de comportamiento de workload para Fase 1...")
     viz.plot_workload_behavior(
-        csv_path="./training_results/phase1/workload_behavior.csv",
+        csv_path=f"./training_results/phase1_{nodes}_nodes/workload_behavior.csv",
         n_max=nodes,
         phase="sim"
     )
@@ -109,52 +109,53 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     vec_env = DummyVecEnv([lambda: raw_env])
     
     # Cargamos la normalización aprendida en la Fase 1
-    if os.path.exists("./training_results/phase1/vec_normalize_phase1.pkl"):
-        env_real = VecNormalize.load("./training_results/phase1/vec_normalize_phase1.pkl", vec_env)
+    phase1_dir = f"./training_results/phase1_{nodes}_nodes"
+    if os.path.exists(f"{phase1_dir}/vec_normalize_phase1.pkl"):
+        env_real = VecNormalize.load(f"{phase1_dir}/vec_normalize_phase1.pkl", vec_env)
         # La mantenemos entrenando (actualizando promedios) porque la escala real puede variar ligeramente
         env_real.training = True 
         env_real.norm_reward = True
     else:
         env_real = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
     
-    if not os.path.exists(f"{MODEL_PATH}.zip"):
+    if not os.path.exists(f"{model_path(nodes)}.zip"):
         print("No se encontró el modelo base simulado.")
         return
 
     device = 'cpu' #'cuda' if torch.cuda.is_available() else 'cpu'
     
-    model = PPO.load(MODEL_PATH, env=env_real, tensorboard_log=directory_logs, device=device)
+    model = PPO.load(model_path(nodes), env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
     model.learning_rate = linear_schedule(0.0001)
 
-    metrics_callback_real = TrainingMetricsCallback(save_dir="./training_results/phase2", file_name=file)
+    metrics_callback_real = TrainingMetricsCallback(save_dir=f"./training_results/phase2_{nodes}_nodes", file_name=file)
     logger_callback = StepLoggerCallback()
     checkpoint_callback = CheckpointCallback(
         save_freq=2000,                  
-        save_path='./logs_checkpoints/',
+        save_path=f'./logs_checkpoints/{nodes}_nodes/',
         name_prefix='ppo_real_env'       
     )
     workload_callback_real = WorkloadBehaviorCallback(
         total_timesteps=iterations,
-        save_dir="./training_results/phase2",
+        save_dir=f"./training_results/phase2_{nodes}_nodes",
         file_name="workload_behavior.csv"
     )
 
 
     model.learn(total_timesteps=iterations, tb_log_name="PPO_Phase2_Real_FineTuned", callback=[metrics_callback_real, logger_callback, checkpoint_callback, workload_callback_real])
 
-    env_real.save(f"./training_results/phase2/vec_normalize_phase2.pkl")
-    model.save("ppo_lb_production_ready")
+    env_real.save(f"./training_results/phase2_{nodes}_nodes/vec_normalize_phase2.pkl")
+    model.save(f"ppo_lb_production_ready_{nodes}_nodes")
     print("Fase 2 completada.\n")
 
     print("Generando curva de aprendizaje para Fase 2...")
-    viz = Visualizer(save_dir="./resultados_graficos/phase2")
-    viz.plot_learning_curve(f"./training_results/phase2/{file}")
+    viz = Visualizer(save_dir=f"./resultados_graficos/phase2_{nodes}_nodes")
+    viz.plot_learning_curve(f"./training_results/phase2_{nodes}_nodes/{file}")
     
     print("Generando gráficos de comportamiento de workload para Fase 2...")
     viz.plot_workload_behavior(
-        csv_path="./training_results/phase2/workload_behavior.csv",
+        csv_path=f"./training_results/phase2_{nodes}_nodes/workload_behavior.csv",
         n_max=nodes,
         phase="real"
     )

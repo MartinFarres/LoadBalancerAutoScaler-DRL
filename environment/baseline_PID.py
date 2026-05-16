@@ -1,6 +1,8 @@
 from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
+import pandas as pd
+import os
 
 class PIDController:
     def __init__(self, kp, ki, kd, setpoint):
@@ -31,8 +33,8 @@ class PIDController:
 def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.csv'):
     print("Iniciando prueba del Baseline PID (Teoría de Control Clásica)...")
     
-    env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max)
-    obs, info = env.reset()
+    env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max, testing=True)
+    obs, info = env.reset(42)
     
     # Target: Mantener la CPU promedio al 60% (0.60)
     pid = PIDController(kp=1.5, ki=0.1, kd=0.5, setpoint=0.60)
@@ -41,12 +43,25 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     hist_ram_total = [] 
     hist_latency = []   
     hist_errors = []
-    
+    hist_workload = [] 
+    hist_activos = []
+
+     # metricas
+    scaling_events = 0
+    sla_violations = 0
+    last_activos = 1 
+
     viz = Visualizer(save_dir="./resultados_graficos/baseline_pid")
 
     for i in range(steps):
         activos = info.get('activos', 1)
-        
+        workload = info.get('workload') * 4000 # Desnormalizamos -> asumiendo 4000 total_users
+
+        # Conteo de eventos de escalado 
+        if i > 0 and activos != last_activos:
+            scaling_events += 1
+        last_activos = activos
+
         cpu_total = 0.0
         ram_total = 0.0
         avg_latency = 0.0
@@ -60,11 +75,23 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
             
         avg_cpu = cpu_total / activos if activos > 0 else 0.0
         
-        hist_cpu_total.append(avg_cpu)
-        hist_ram_total.append(ram_total / activos if activos > 0 else 0)
-        hist_latency.append(avg_latency / activos if activos > 0 else 0)
-        hist_errors.append(total_errors)
+        if activos > 0:
+            cpu_total /= activos  # Sacamos el promedio real
+            ram_total /= activos  # Sacamos el promedio real 
+            avg_latency /= activos
         
+        # Conteo de violaciones SLA (latencia > 0.5 )
+        if avg_latency > 0.5:
+            sla_violations += 1
+
+        # Guardamos
+        hist_cpu_total.append(avg_cpu)
+        hist_ram_total.append(ram_total)
+        hist_latency.append(avg_latency)
+        hist_errors.append(total_errors)
+        hist_activos.append(activos)
+        hist_workload.append(workload)
+
         # --- LOGICA DE CONTROL PID ---
         # El PID calcula la "señal de control" basandose en la CPU actual
         control_signal = pid.compute(avg_cpu)
@@ -84,10 +111,15 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
         
         if terminated or truncated:
             break
-
     
-    import pandas as pd
-    import os
+    total_steps = len(hist_cpu_total)
+    sla_violation_pct = (sla_violations / total_steps) * 100
+
+    # Eficiencia de costo: Usuarios soportados por cada contenedor activo
+    cost_efficiencies = [w/max(1, a) for w, a in zip(hist_workload, hist_activos)]
+    avg_cost_efficiency = np.mean(cost_efficiencies)
+    
+  
     formatted_file = f"test_pid_n{n_max}_i{steps}_{file}"
     os.makedirs("./training_results/testing_results", exist_ok=True)
     save_path = os.path.join("./training_results/testing_results", formatted_file)
@@ -106,7 +138,9 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
         ram_history=hist_ram_total,
         latency_history=hist_latency,
         errors_history=hist_errors,
-        high_latency_threshold=0.8 
+        scaling_events=scaling_events,        
+        sla_violation_pct=sla_violation_pct,  
+        avg_cost_efficiency=avg_cost_efficiency
     )
 
 if __name__ == "__main__":

@@ -228,26 +228,39 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 
 - _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
 
-## Diseño de la funcion de recompensa
+## Diseño de la función de recompensa
 
-La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en la señal que se utiliza para indicar cuando escalar y que penaliza los comportamientos indeseables [1]. Se optó por una función de penalización pura, es decir sin términos positivos, de forma que el agente aprenda a minimizar el daño.
+La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en una señal escalar que penaliza los comportamientos indeseables [1]. Se adoptó una función de penalización pura, sin términos positivos, de modo que el agente aprenda a minimizar el daño en lugar de perseguir una recompensa absoluta. Como caso límite, si el número de contenedores activos es cero, la función retorna inmediatamente $R = -200$, garantizando que el vaciado total del cluster sea siempre la peor decisión posible independientemente de cualquier otra señal.
 
-Como caso especial, si el número de contenedores activos es cero, la función retorna inmediatamente R=−200, asegurando que el agente nunca aprenda a vaciar el cluster independientemente de las otras señales.
-Para el resto de los casos, la función agrega cuatro componentes de penalización calculados sobre los valores promedios de los contenedores activos:
+Para el resto de los casos, la recompensa total se compone de tres grupos de penalizaciones calculados sobre los promedios de los nodos activos:
 
-$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) \right] - \delta$$
+$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) + P_{\text{op}} \right] - \delta$$
 
-Los componentes se organizan en dos grupos según el impacto sobre la experiencia del usuario. La latencia y los errores HTTP constituyen las métricas orientadas al usuario (_user-facing_), para la cuales su degradación es perceptible directamente por el cliente y por tanto reciben las penalizaciones más severas. El costo operativo y la saturación de recursos son métricas orientadas al operador (_operator-facing_), y su impacto es interno al sistema y el usuario no los percibe, por lo que actúan como señales de fondo con peso unitario.
+### Penalizaciones orientadas al usuario (_user-facing_)
 
-Los errores HTTP reciben la penalización más elevada ($W_{err} = 50.0$) dado que una respuesta fallida representa una degradación crítica del
-servicio. La latencia se penaliza con $W_{lat} = 2.0$ aplicado cuadráticamente, haciendo al agente progresivamente más sensible a los picos. El costo operativo y la saturación de recursos comparten peso unitario ($W_{cost} = W_{sat} = 1.0$), desincentivando el sobreaprovisionamiento y el uso excesivo de recursos sin competir con las penalizaciones de calidad de servicio.
+Los errores HTTP y la latencia de respuesta son las únicas métricas que el cliente percibe directamente, por lo que reciben las penalizaciones más severas.
 
-Finalmente, el término $\delta$ penaliza las decisiones de scaling en los extremos del espacio
-de acción:
+Los errores HTTP 5xx reciben el mayor peso ($W_{\text{err}} = 50.0$): una respuesta fallida representa una degradación crítica e irrecuperable del servicio desde la perspectiva del usuario. La latencia se penaliza con $W_{\text{lat}} = 2.0$ aplicado cuadráticamente sobre el promedio normalizado, lo que hace al agente progresivamente más sensible a los picos. Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia promedio no supera el 10% del timeout máximo ($\overline{\text{lat}} \leq 0.1$), la penalización se anula completamente, definiendo implícitamente el nivel de SLA del sistema.
 
-$$\delta = \begin{cases} 0.05 & \text{si } a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7 \\ 0 & \text{en otro caso} \end{cases}$$
+### Penalizaciones orientadas al operador (_operator-facing_)
 
-Su propósito es desincentivar el comportamiento oscilante de escalar y desescalar continuamente sin evidencia suficiente, favoreciendo decisiones moderadas cuando el estado del cluster no lo justifica.
+El costo operativo penaliza el sobreaprovisionamiento en función de la fracción de nodos activos sobre el total disponible ($W_{\text{cost}} = 1.0$), desincentivando mantener contenedores encendidos sin necesidad. La saturación de recursos penaliza el exceso de uso de CPU por encima del 80% y de RAM por encima del 85%, acumulando únicamente la diferencia que sobrepasa esos umbrales ($W_{\text{sat}} = 1.0$ para ambos). Estos pesos unitarios permiten que ambas señales actúen como guías de fondo sin solaparse con las penalizaciones de calidad de servicio.
+
+### Zona muerta de CPU y penalización adaptativa ($P_{\text{op}}$)
+
+El término $P_{\text{op}}$ implementa una zona muerta que define el rango operativo eficiente del cluster. Si el uso promedio de CPU de los nodos activos cae entre el 40% y el 75%, no se aplica penalización adicional, ya que el cluster opera con el nivel de ocupación deseado. Fuera de ese rango, la penalización adopta dos formas distintas según la dirección de la desviación:
+
+$$P_{\text{op}} = \begin{cases} W_{\text{op}} \cdot (0.40 - \overline{\text{cpu}}) \cdot \dfrac{N_{\text{active}}}{N_{\text{max}}} & \text{si } \overline{\text{cpu}} < 0.40 \\[8pt] W_{\text{prev}} \cdot (\overline{\text{cpu}} - 0.75) & \text{si } \overline{\text{cpu}} > 0.75 \\[4pt] 0 & \text{en otro caso} \end{cases}$$
+
+Cuando la CPU promedio está por debajo del 40%, la penalización escala con la cantidad de nodos activos ($W_{\text{op}} = 2.0$), castigando proporcionalmente más al agente cuanto más contenedores ociosos mantiene encendidos. Cuando supera el 75%, se aplica una penalización preventiva suave ($W_{\text{prev}} = 2.0$) que incentiva al agente a escalar anticipadamente antes de que el sistema colapse, en lugar de reaccionar recién cuando la saturación y los errores ya son visibles.
+
+### Fricción de escalado ($\delta$)
+
+El término $\delta$ penaliza cada decisión de escalar en los extremos del espacio de acción:
+
+$$\delta = \begin{cases} W_{\text{friction}} & \text{si } a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7 \\ 0 & \text{en otro caso} \end{cases}$$
+
+Con $W_{\text{friction}} = 2.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada acción de escalar con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de _chattering_ (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
 
 ## Infraestructura de Telemetría y Monitoreo
 

@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 class TrafficGenerator:
-    def __init__(self, total_users=4000, min_duration=120, max_duration=900):
+    def __init__(self, total_users=4000, min_duration=60, max_duration=900, testing=False):
         self.total_users = total_users
         self.min_duration = min_duration
         self.max_duration = max_duration
@@ -13,6 +13,8 @@ class TrafficGenerator:
         self.time_limit = 0
         self.function_number = 0
         
+        self.testing = testing
+
         self.traffic_strategies = {
             0: self._calc_double_wave,
             1: self._calc_lineal,
@@ -21,9 +23,20 @@ class TrafficGenerator:
             4: self._calc_trend,
             5: self._calc_seasonal,
             6: self._calc_sawtooth,
-            7: self._calc_spike_recovery
+            7: self._calc_spike_recovery,
+            # TESTING ------------------
+            8: self._calc_sustained_limit,   
+            9: self._calc_fast_oscillation, 
+            10: self._calc_flash_crash
         }
-        
+    
+    def reset(self, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+        self.running_fn = False
+        self.function_tick_start = 0
+
+    
     def get_workload(self, current_time):
         relative_time = current_time - self.function_tick_start
 
@@ -48,11 +61,15 @@ class TrafficGenerator:
 
     def _generate_new_cycle_parameters(self, current_time):
         """Genera todos los parámetros aleatorios para el nuevo ciclo de tráfico."""
+        if not self.testing:
+            self.function_number = np.random.randint(0, 8)
+        else:
+            self.function_number = np.random.randint(8, 11)
+        
         self.time_limit = np.random.randint(self.min_duration, self.max_duration)
-        self.function_number = np.random.randint(0, 8)
         self.function_tick_start = current_time
         
-        self.load_min = self.total_users * np.random.uniform(0.25, 0.50)
+        self.load_min = self.total_users * np.random.uniform(0.05, 0.25)
         self.load_max = self.total_users * np.random.uniform(0.65, 1.00)
         
         self.shift_peak_one = np.random.uniform(0.1 , 0.4)
@@ -151,3 +168,30 @@ class TrafficGenerator:
     def _calc_fallback(self, relative_time):
         """Fallback de seguridad si el function_number no está mapeado."""
         return self.load_min
+    
+    def _calc_sustained_limit(self, relative_time):
+        # Mantiene la carga al 90% de la capacidad max
+        target = self.load_max * 0.90
+        # Ligero ruido gaussiano para que no sea un bloque perfecto
+        noise = np.random.normal(0, target * 0.02)
+        return target + noise
+
+    def _calc_fast_oscillation(self, relative_time):
+        # Alterna entre carga minS y max cada 15 steps
+        period = 15 
+        if (relative_time // period) % 2 == 0:
+            return self.load_max
+        else:
+            return self.load_min
+
+    def _calc_flash_crash(self, relative_time):
+        # Pico alto, caida abrupta, y recuperacioSn progresivaS
+        if relative_time < 50:
+            return self.load_max
+        elif relative_time < 60:
+            return 10.0 # Caida abrupta al minimo permitido por el entorno
+        else:
+            # Recuperacion gradual
+            recovery_time = relative_time - 60
+            recovery_rate = (self.load_max - 10.0) / max(1, (self.time_limit - 60))
+            return min(self.load_max, 10.0 + recovery_rate * recovery_time)

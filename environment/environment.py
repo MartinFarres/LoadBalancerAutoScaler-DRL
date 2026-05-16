@@ -15,7 +15,7 @@ class LoadBalancerEnv(gym.Env):
     Soporta modo Real (FastAPI/Docker) y modo Simulado (Matemático)
     """
     
-    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False):
+    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
         self.max_memory = max_memory 
@@ -23,6 +23,7 @@ class LoadBalancerEnv(gym.Env):
         self.current_step = 0
         self.api_url = api_url
         self.simulated = simulated
+        self.testing = testing
 
         # OBSERVATION SPACE
         self.observation_space = spaces.Box(
@@ -49,7 +50,7 @@ class LoadBalancerEnv(gym.Env):
         if self.simulated:
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen = TrafficGenerator()
+            self.traffic_gen = TrafficGenerator(testing=self.testing)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -57,7 +58,10 @@ class LoadBalancerEnv(gym.Env):
         self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
         
         if not self.simulated:
-            requests.get(f"{self.api_url}/reset")
+            try:
+                requests.get(f"{self.api_url}/reset", timeout=10)
+            except Exception as e:
+                print(f"Reset request failed: {e}")
             time.sleep(0.5) # Ajustado al límite para HAProxy
             self.actual_state = self.get_real_metrics()
         else:
@@ -78,9 +82,12 @@ class LoadBalancerEnv(gym.Env):
         if not self.simulated:
             payload = {
                 "weights": raw_weights.tolist(),
-                "decision": float(scale_desision) 
+                "decision": float(scale_desision)
             }
-            requests.post(f"{self.api_url}/action", json=payload)
+            try:
+                requests.post(f"{self.api_url}/action", json=payload, timeout=10)
+            except Exception as e:
+                print(f"Action request failed: {e}")
 
             # ESPERA DINAMICA
             # Escalo el cluster?
@@ -161,7 +168,7 @@ class LoadBalancerEnv(gym.Env):
         new_state = []
         workload_norm = 0.0
         try:
-            response = requests.get(f"{self.api_url}/metrics").json()
+            response = requests.get(f"{self.api_url}/metrics", timeout=10).json()
 
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
