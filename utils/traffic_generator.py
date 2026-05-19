@@ -69,8 +69,8 @@ class TrafficGenerator:
         self.time_limit = np.random.randint(self.min_duration, self.max_duration)
         self.function_tick_start = current_time
         
-        self.load_min = self.total_users * np.random.uniform(0.05, 0.25)
-        self.load_max = self.total_users * np.random.uniform(0.65, 1.00)
+        self.load_min = self.total_users * np.random.uniform(0.02, 0.25)
+        self.load_max = self.total_users * np.random.uniform(0.30, 1.00) # expandir rango para permitir picos mas bajos
         
         self.shift_peak_one = np.random.uniform(0.1 , 0.4)
         self.shift_peak_two = np.random.uniform(0.6 , 0.9)
