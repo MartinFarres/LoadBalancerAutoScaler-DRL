@@ -68,6 +68,7 @@ class LoadBalancerEnv(gym.Env):
             # Reseteo del estado simulado
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
+            self.traffic_gen.reset()
             self.actual_state = self.get_simulated_metrics(action=None)
 
         info = {"mensaje": f"Cluster reiniciado a 1 instancia (Simulado: {self.simulated})"}
@@ -235,8 +236,8 @@ class LoadBalancerEnv(gym.Env):
                 # M/M/1 -----------------------------------------------------------------------------------------
                 
                 # Params Base
-                max_capacity = 50.0  # mu: Tasa de servicio: peticiones maximas tericas por paso
-                base_latency_ms = 15.0 # S: Tiempo de servicio base sin hacer cola
+                max_capacity = self.traffic_gen.total_users() / self.n_max  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                base_latency_ms = 50.0 # S: Tiempo de servicio base sin hacer cola
                 
                 # Tasa de llegada (lambda)
                 node_load = total_workload * norm_weights[i]
