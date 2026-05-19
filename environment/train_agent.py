@@ -10,6 +10,8 @@ import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.buffers import RolloutBuffer
 import wandb
 from wandb.integration.sb3 import WandbCallback
 
@@ -127,7 +129,17 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     model = PPO.load(model_path(nodes), env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
-    model.learning_rate = linear_schedule(0.0001)
+    model.lr_schedule = get_schedule_fn(linear_schedule(0.0001))
+    model.n_steps = 256 # sobrescribimos n_steps de la fase 1 para generar mas actualizaciones de la policy por falta de recursos y pocas iteraciones
+    model.rollout_buffer = RolloutBuffer(
+        model.n_steps,
+        model.observation_space,
+        model.action_space,
+        device=model.device,
+        gamma=model.gamma,
+        gae_lambda=model.gae_lambda,
+        n_envs=model.n_envs,
+    )
 
     metrics_callback_real = TrainingMetricsCallback(save_dir=f"./training_results/phase2_{nodes}_nodes", file_name=file)
     logger_callback = StepLoggerCallback()
@@ -238,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument('comando', type=str)
     parser.add_argument('--nodes', type=int, default=5)
     parser.add_argument('--file', type=str, default='training_metrics.csv')
-    parser.add_argument('--iterations', type=int, default=50000)
+    parser.add_argument('--iterations', type=int, default=5000)
     args = parser.parse_args()
 
     if args.comando == "train_phase_1_simulation":

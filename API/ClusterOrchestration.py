@@ -102,6 +102,7 @@ class ClusterOrchestration():
             }
 
         
+    @staticmethod
     def _stop_container(container):
         try:
             container.stop()
