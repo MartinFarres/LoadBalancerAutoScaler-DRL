@@ -176,7 +176,7 @@ def init_processes(nodes):
 
     try:
         # Hacemos el POST al init. Le damos un timeout largo porque Docker tiene que crear contenedores
-        res = requests.post(f"http://127.0.0.1:8000/init?n_max={nodes}", timeout=60)        
+        res = requests.post(f"http://127.0.0.1:8000/init?n_max={nodes}", timeout=120)        
         if res.status_code == 200:
             print("  Cluster inicializado con éxito.")
         else:
@@ -213,16 +213,18 @@ def init_processes(nodes):
 
 def down_processes(processes):
     print("\n [Limpieza] Apagando servicios en segundo plano...")
-    for nombre, proceso in processes:
-        print(f"   Deteniendo {nombre}...")
-        proceso.terminate()
-        proceso.wait() # Aseguramos que muera completamente
     
     try:
         requests.get("http://127.0.0.1:8000/cleanup", timeout=30)
     except:
         pass
-        
+
+    for nombre, proceso in processes:
+        print(f"   Deteniendo {nombre}...")
+        proceso.terminate()
+        proceso.wait() # Aseguramos que muera completamente
+    
+    time.sleep(5) # Tiempo para que docker termine de matar los procesos
     print("Terminado.")
 
 if __name__ == "__main__":

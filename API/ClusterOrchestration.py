@@ -102,19 +102,24 @@ class ClusterOrchestration():
             }
 
         
-        
+    def _stop_container(container):
+        try:
+            container.stop()
+        except Exception:
+            pass
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
         
     def stop_all(self):
         # Stop and remove all node containers (including stopped ones)
-        for container in self.client.containers.list(all=True, filters={"label": "role=lbas_node"}):
-            try:
-                container.stop()
-            except Exception:
-                pass
-            try:
-                container.remove(force=True)
-            except Exception:
-                pass
+        containerList = self.client.containers.list(all=True, filters={"label": "role=lbas_node"})
+        
+        # Use of threads for better performance
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            list(ex.map(self._stop_container, containerList))
+
         # Stop and remove HAProxy
         try:
             haproxy = self.client.containers.get("lbas_haproxy")

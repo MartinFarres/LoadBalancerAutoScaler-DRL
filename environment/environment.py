@@ -236,7 +236,7 @@ class LoadBalancerEnv(gym.Env):
                 # M/M/1 -----------------------------------------------------------------------------------------
                 
                 # Params Base
-                max_capacity = self.traffic_gen.total_users() / self.n_max  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                max_capacity = self.traffic_gen.total_users / self.n_max  # mu: Tasa de servicio: peticiones maximas tericas por paso
                 base_latency_ms = 50.0 # S: Tiempo de servicio base sin hacer cola
                 
                 # Tasa de llegada (lambda)
