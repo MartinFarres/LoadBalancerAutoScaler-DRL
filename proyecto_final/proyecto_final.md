@@ -456,7 +456,7 @@ El gráfico de coordenadas paralelas muestra que las líneas correspondientes a 
 ![5_top5_table](../resultados_graficos/sweep_analysis/5_top5_table.png)
 _Figura 4.6: Resumen de hiperparámetros para las 5 mejores ejecuciones._
 
-La figura 4.6 muestra una tabla con los cinco mejores runs. La misma refuerza el patrón encontrado con notable consistencia: todas las corridas utilizan `n_steps = 128`, cuatro de cinco emplean `batch_size = 64`, todas seleccionan `clip_range` de 0.2 o 0.3, y todas ubican `gamma` en el rango [0.85, 0.89]. La tasa de aprendizaje (`learning_rate`) varía entre 1.13e-3 y 2.03e-3, un rango moderado-alto. Con base en este análisis, los hiperparámetros de la corrida **75589c1o** fueron seleccionados para el entrenamiento definitivo de la Fase 1.
+La Figura 4.6 detalla las configuraciones específicas responsables de los cinco mejores desempeños obtenidos durante la búsqueda. Los datos tabulados reafirman las tendencias visualizadas previamente con una consistencia notable: la totalidad de las mejores ejecuciones convergen unánimemente en la utilización de un horizonte de memoria muy corto (`n_steps` = 128) y valores de descuento fuertemente acotados (`gamma` $\in$ [0.85, 0.89]). Asimismo, destaca una preferencia predominante por lotes pequeños (cuatro de cinco emplean `batch_size` = 64) y tasas de aprendizaje (`learning_rate`) operando en un rango moderado-alto (entre $1.13 \times 10^{-3}$ y $2.03 \times 10^{-3}$). Por lo mencionado entonces, se procedió a seleccionar la configuración exacta correspondiente a la ejecución líder (**75589c1o**) como la arquitectura base de hiperparámetros para llevar a cabo el entrenamiento definitivo del agente en la Fase 1.
 
 <br>
 
