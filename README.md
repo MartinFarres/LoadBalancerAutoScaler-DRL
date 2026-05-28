@@ -12,7 +12,7 @@ The system is composed of four layers:
 
 1. **Control Plane** — The PPO agent sends an action vector (routing weights + scale decision) to the Bridge API, and receives back the current observation space (per-container metrics).
 2. **Infrastructure Management** — The Bridge uses the Docker SDK to start/stop containers and reads hardware metrics via Linux cgroups.
-3. **L7 Routing & Monitoring** — HAProxy distributes traffic according to the weights set by the agent and reports latency and HTTP error rates.
+3. **L7 Routing & Monitoring** — HAProxy distributes traffic according to the weights set by the agent and reports latency, HTTP error rates, and per-server queue depth.
 4. **Data Plane** — Locust generates realistic, variable HTTP traffic patterns against the cluster entry point.
 
 ---
@@ -26,7 +26,7 @@ Training is split into two phases to maximize sample efficiency:
 | **Phase 1** | Simulated          | Pre-trains the agent using a mathematical M/M/1 queueing model. Fast iteration, no Docker required. |
 | **Phase 2** | Real (Fine-Tuning) | Fine-tunes the pre-trained model on a live Docker cluster with real Locust traffic.                 |
 
-The simulated environment models CPU, RAM (Little's Law), latency (M/M/1), and error rate (Sigmoid overflow) with Gaussian noise and stochastic traffic patterns (double wave, linear, exponential, step functions).
+The simulated environment models CPU, RAM and queue depth (Little's Law), latency (M/M/1), and error rate (Sigmoid overflow) with Gaussian noise and stochastic traffic patterns (double wave, linear, exponential, step functions).
 
 ---
 
@@ -42,13 +42,16 @@ The simulated environment models CPU, RAM (Little's Law), latency (M/M/1), and e
 │   ├── bridge.py                    # FastAPI bridge between agent and Docker cluster
 │   ├── ClusterOrchestration.py      # Docker SDK + HAProxy + cgroups metrics collector
 │   ├── schemas.py                   # Pydantic models (AgentAction, ContainerMetrics)
-│   ├── fast_metrics.c               # C shared library for fast network namespace metric reads
 │   ├── haproxy.cfg                  # Auto-generated HAProxy configuration
 │   ├── locust.py                    # Locust load generator with dynamic traffic shapes
 │   └── dummy_server/
 │       ├── app.py                   # Flask server with /, /cpu, /ram endpoints
 │       ├── dockerfile
 │       └── requirements.txt
+│
+├── utils/
+│   ├── config.py                    # Central tunables (TOTAL_USERS, CPU/RAM limits, queue ceiling, seed)
+│   └── traffic_generator.py         # Stochastic workload pattern generator (shared by sim + Locust)
 │
 └── environment/
     ├── environment.py               # Gymnasium environment (real + simulated modes)
@@ -74,18 +77,15 @@ cd API/dummy_server
 docker build -t dummy_server:latest .
 ```
 
-- Compile the C metrics library:
-
-```bash
-cd API
-gcc -shared -fPIC -o libfastmetrics.so fast_metrics.c
-```
-
 - Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
+
+> **Note:** Container resource limits and workload scale are centralized in [`utils/config.py`](utils/config.py)
+> (`CONTAINER_CPU_CORES`, `MAX_MEMORY`, `TOTAL_USERS`, `MAX_QUEUE_DEPTH`, `SEED`). Edit them there rather than
+> hunting through the codebase.
 
 ---
 
@@ -114,7 +114,7 @@ This executes in sequence: simulated pre-training → real fine-tuning → all t
 | `--pipeline`              | `-p`   | `str` | `all`                  | Which pipeline to run. See options below.                                            |
 | `--nodes`                 | `-n`   | `int` | `5`                    | Number of Docker containers in the cluster. Must be ≤ 10.                            |
 | `--file`                  | `-f`   | `str` | `training_metrics.csv` | Output CSV filename for metrics (a prefix is auto-appended).                         |
-| `--simulated_iterations`  | `-si`  | `int` | `50000`                | Timesteps for Phase 1 simulated training.                                            |
+| `--simulated_iterations`  | `-si`  | `int` | `200000`               | Timesteps for Phase 1 simulated training.                                            |
 | `--real_iterations`       | `-ri`  | `int` | `5000`                 | Timesteps for Phase 2 real-world fine-tuning.                                        |
 | `--sim_test_iterations`   | `-sti` | `int` | `None`                 | Steps for **all** simulated test runs (PPO, PID, BAI). Overrides `-ti`/`-pi`/`-ai`. |
 | `--real_test_iterations`  | `-rti` | `int` | `None`                 | Steps for **all** real test runs (PPO, PID, BAI). Overrides `-ti`/`-pi`/`-ai`.      |
@@ -221,21 +221,22 @@ python environment/test_env.py
 
 The Bridge (`API/bridge.py`) exposes a FastAPI server on port `8000` that acts as the middleware between the PPO agent and the Docker cluster.
 
-| Method | Endpoint   | Description                                                            |
-| ------ | ---------- | ---------------------------------------------------------------------- |
-| `POST` | `/init`    | Initializes the cluster. Starts all containers and HAProxy.            |
-| `POST` | `/action`  | Receives the agent's action (weights + scale decision) and applies it. |
-| `GET`  | `/metrics` | Returns the current `ContainerMetrics` for all N containers.           |
-| `GET`  | `/reset`   | Resets the cluster to its initial state (1 active container).          |
-| `GET`  | `/cleanup` | Stops and removes all managed Docker containers.                       |
+| Method | Endpoint    | Description                                                                          |
+| ------ | ----------- | ------------------------------------------------------------------------------------ |
+| `POST` | `/init`     | Initializes the cluster. Starts all containers and HAProxy.                          |
+| `POST` | `/action`   | Receives the agent's action (weights + scale decision) and applies it.               |
+| `GET`  | `/metrics`  | Returns the current `ContainerMetrics` for all N containers + global `workload_norm`. |
+| `POST` | `/workload` | Called by Locust each tick to report the current user count (sets `workload_norm`).  |
+| `GET`  | `/reset`    | Resets the cluster to its initial state (1 active container).                        |
+| `POST` | `/cleanup`  | Stops and removes all managed Docker containers.                                     |
 
 #### `/init` parameters (query string)
 
-| Parameter    | Default     | Description                                |
-| ------------ | ----------- | ------------------------------------------ |
-| `n_max`      | `10`        | Maximum number of containers to provision. |
-| `max_memory` | `1024`      | Memory limit per container in MB.          |
-| `node_name`  | `lbas_node` | Prefix name for container instances.       |
+| Parameter    | Default     | Description                                                              |
+| ------------ | ----------- | ------------------------------------------------------------------------ |
+| `n_max`      | `10`        | Maximum number of containers to provision.                               |
+| `max_memory` | `1024`      | Memory limit per container in MB (defaults to `MAX_MEMORY` in config).   |
+| `node_name`  | `lbas_node` | Prefix name for container instances.                                     |
 
 #### `/action` body (`AgentAction`)
 
@@ -255,16 +256,25 @@ The Bridge (`API/bridge.py`) exposes a FastAPI server on port `8000` that acts a
 
 ### Observation Space
 
-A flat vector of shape `(n_max × 6,)` where each group of 6 values represents one container slot:
+A flat vector of shape `(n_max × 6 + 1,)`: six values per container slot, followed by a single global
+workload value. All values are normalized to `[0, 1]`.
 
-| Index (offset) | Metric                | Range    | Description                           |
-| -------------- | --------------------- | -------- | ------------------------------------- |
-| `+0`           | `cpu_usg`             | `[0, 1]` | CPU utilization                       |
-| `+1`           | `ram_usg_pct`         | `[0, 1]` | RAM usage as % of limit               |
-| `+2`           | `ram_total_normalize` | `[0, 1]` | Normalized RAM limit                  |
-| `+3`           | `latency`             | `[0, 1]` | Response time (normalized to 2000 ms) |
-| `+4`           | `error_rate`          | `[0, 1]` | HTTP 5xx error rate                   |
-| `+5`           | `status`              | `{0, 1}` | Container active (1) or off (0)       |
+Per-container block (offset relative to slot start `i × 6`):
+
+| Index (offset) | Metric         | Range    | Description                                                        |
+| -------------- | -------------- | -------- | ------------------------------------------------------------------ |
+| `+0`           | `cpu_usg`      | `[0, 1]` | CPU utilization                                                    |
+| `+1`           | `ram_usg_pct`  | `[0, 1]` | RAM usage as % of the container memory limit                       |
+| `+2`           | `queue_depth`  | `[0, 1]` | Request queue depth, normalized by `MAX_QUEUE_DEPTH`. **Real:** HAProxy `qcur`. **Sim:** Little's-law `L`. |
+| `+3`           | `latency`      | `[0, 1]` | Response time (normalized to 2000 ms)                             |
+| `+4`           | `error_rate`   | `[0, 1]` | HTTP 5xx error rate                                               |
+| `+5`           | `status`       | `{0, 1}` | Container active (1) or off (0)                                   |
+
+Global tail value:
+
+| Index           | Metric          | Range    | Description                                            |
+| --------------- | --------------- | -------- | ------------------------------------------------------ |
+| `n_max × 6`     | `workload_norm` | `[0, 1]` | Current cluster workload (users / `TOTAL_USERS`)       |
 
 ### Action Space
 
@@ -279,21 +289,26 @@ A flat vector of shape `(n_max + 1,)`:
 
 ## Reward Function
 
-The reward is a penalty-based signal designed to balance service quality against infrastructure cost:
+The reward is a penalty-based signal designed to balance service quality against infrastructure cost.
+All penalties are summed and negated; the agent maximizes by minimizing the total penalty:
 
 ```
-R = -(W_latency × avg_latency² + W_errors × avg_errors + W_cost × (active/n_max) + W_saturation)
+R = -(latency + errors + cost + saturation + overprovision)  - scale_friction
 ```
 
-| Component      | Weight | Penalizes                                      |
-| -------------- | ------ | ---------------------------------------------- |
-| Latency        | 2.0    | High response times (squared to punish spikes) |
-| Errors         | 50.0   | HTTP 5xx responses                             |
-| Cost           | 1.0    | Unnecessary active containers                  |
-| CPU Saturation | 1.0    | CPU usage above 80%                            |
-| RAM Saturation | 1.0    | RAM usage above 85%                            |
-| Scaling churn  | 0.05   | Frequent unnecessary scale events              |
-| Total failure  | −200   | All containers offline                         |
+| Component             | Weight | Penalizes                                                                 |
+| --------------------- | ------ | ------------------------------------------------------------------------- |
+| Latency               | 2.0    | High response times (squared; free below a 0.1 normalized floor)          |
+| Errors                | 50.0   | HTTP 5xx responses                                                        |
+| Cost                  | 1.0    | Active containers (`active / n_max`)                                      |
+| CPU Saturation        | 1.0    | CPU usage above 80%                                                       |
+| RAM Saturation        | 1.0    | RAM usage above 85%                                                       |
+| Overprovision         | 2.0    | Idle containers (avg CPU below the 40% target)                            |
+| Preventive saturation | 2.0    | Avg CPU above the 75% safe ceiling (soft pre-collapse penalty)            |
+| Scale friction        | 2.0    | Reversing scale direction (up→down / down→up) to suppress chattering      |
+| Total failure         | −200   | All containers offline (terminal)                                        |
+
+> Weights live in `reward_function` in [`environment/environment.py`](environment/environment.py).
 
 ---
 
@@ -310,15 +325,17 @@ Training curves, policy loss, and value loss are logged automatically during bot
 
 ### Output Files
 
-| Path                                  | Contents                                                  |
-| ------------------------------------- | --------------------------------------------------------- |
-| `./training_results/phase1/`          | Phase 1 training metrics CSV                              |
-| `./training_results/phase2/`          | Phase 2 fine-tuning metrics CSV                           |
-| `./training_results/testing_results/` | Per-run test metrics CSVs                                 |
-| `./resultados_graficos/`              | Learning curve PNGs and summary table images              |
-| `./logs_checkpoints/`                 | SB3 model checkpoints (saved every 2000 steps in Phase 2) |
-| `ppo_lb_simulated_base.zip`           | Saved Phase 1 model                                       |
-| `ppo_lb_production_ready.zip`         | Saved Phase 2 model                                       |
+Paths are suffixed with the node count (`N` = value of `--nodes`):
+
+| Path                                          | Contents                                                  |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `./training_results/phase1_N_nodes/`          | Phase 1 training metrics CSV                              |
+| `./training_results/phase2_N_nodes/`          | Phase 2 fine-tuning metrics CSV                           |
+| `./training_results/testing_results_N_nodes/` | Per-run test metrics CSVs                                 |
+| `./resultados_graficos/`                      | Learning curve PNGs and summary table images              |
+| `./logs_checkpoints/N_nodes/`                 | SB3 model checkpoints (saved every 2000 steps in Phase 2) |
+| `ppo_lb_simulated_base_N_nodes.zip`           | Saved Phase 1 model                                       |
+| `ppo_lb_production_ready_N_nodes.zip`         | Saved Phase 2 model                                       |
 
 ---
 
