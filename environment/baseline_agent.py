@@ -119,16 +119,22 @@ def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_met
     print(f"Métricas del BAI guardadas en: {save_path}")
 
     print("Generando tabla resumen del Baseline BAI...")
-
     viz.generate_testing_summary_table(
         cpu_history=hist_cpu_total,
         ram_history=hist_ram_total,
         latency_history=hist_latency,
         errors_history=hist_errors,
-        scaling_events=scaling_events,        
-        sla_violation_pct=sla_violation_pct,  
-        avg_cost_efficiency=avg_cost_efficiency
+        scaling_events=scaling_events,
+        sla_violation_pct=sla_violation_pct,
+        avg_cost_efficiency=avg_cost_efficiency,
+        mode=mode_tag,
     )
+
+    print("Generando curva de recompensa del Baseline BAI...")
+    viz.plot_testing_reward_curve(csv_path=save_path, mode=mode_tag)
+
+    print("Generando gráficos de comportamiento de workload del Baseline BAI...")
+    viz.plot_testing_behavior(csv_path=save_path, n_max=n_max, mode=mode_tag)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 import os
 
@@ -10,19 +10,37 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
 
     np.set_printoptions(precision=2, suppress=True, linewidth=120)
 
-    env = LoadBalancerEnv(simulated=simulated, max_steps=iterations, n_max=nodes, testing=True)
+    raw_env = LoadBalancerEnv(simulated=simulated, max_steps=iterations, n_max=nodes, testing=True)
+
+    # Load the VecNormalize statistics saved at the end of the matching training phase.
+    # The policy network was trained on VecNormalize-normalised observations, so we must
+    # apply the same transform at inference time or the action distribution will be wrong.
+    if simulated:
+        pkl_path = f"./training_results/phase1_{nodes}_nodes/vec_normalize_phase1.pkl"
+    else:
+        pkl_path = f"./training_results/phase2_{nodes}_nodes/vec_normalize_phase2.pkl"
+
+    obs_normalizer = None
+    if os.path.exists(pkl_path):
+        _dummy = DummyVecEnv([lambda: raw_env])
+        obs_normalizer = VecNormalize.load(pkl_path, _dummy)
+        obs_normalizer.training = False   # freeze running statistics
+        obs_normalizer.norm_reward = False
+        print(f"VecNormalize statistics loaded from: {pkl_path}")
+    else:
+        print(f"Warning: {pkl_path} not found — running without obs normalisation.")
 
     print("Loading trained agent...")
-    
+
     model = PPO.load(f"ppo_lb_production_ready_{nodes}_nodes")
-    
-    obs, info = env.reset(42)
-    
+
+    obs, info = raw_env.reset(42)
+
     print("Begin traffic simulation...")
     print("-" * 110)
     print(f"| {'Step':^6} | {'Nodos':^7} | {'Scale Action':^14} | {'Reward':^9} | {'Pesos de Ruteo (HAProxy)':^45} |")
     print("-" * 110)
-    
+
     # listas
     hist_reward = []
     hist_cpu_total = []
@@ -35,11 +53,12 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
     # metricas
     scaling_events = 0
     sla_violations = 0
-    last_activos = 1 
-    
+    last_activos = 1
+
     for i in range(iterations):
-        action, _states = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs_for_predict = obs_normalizer.normalize_obs(obs) if obs_normalizer is not None else obs
+        action, _states = model.predict(obs_for_predict, deterministic=True)
+        obs, reward, terminated, truncated, info = raw_env.step(action)
         
         activos = info['activos']
         workload_norm = info['workload']
@@ -108,19 +127,27 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
     }).to_csv(save_path, index=False)
     print(f"Métricas del test guardadas en: {save_path}")
 
-    # --- TABLA FINAL ---
+    # --- GRAFICOS Y TABLA FINAL ---
+
+    viz = Visualizer(save_dir="./resultados_graficos/ppo")
 
     print("Generando tabla resumen...")
-    viz = Visualizer()
     viz.generate_testing_summary_table(
         cpu_history=hist_cpu_total,
         ram_history=hist_ram_total,
         latency_history=hist_latency,
         errors_history=hist_errors,
-        scaling_events=scaling_events,        
-        sla_violation_pct=sla_violation_pct,  
-        avg_cost_efficiency=avg_cost_efficiency
+        scaling_events=scaling_events,
+        sla_violation_pct=sla_violation_pct,
+        avg_cost_efficiency=avg_cost_efficiency,
+        mode=mode_tag,
     )
+
+    print("Generando curva de recompensa...")
+    viz.plot_testing_reward_curve(csv_path=save_path, mode=mode_tag)
+
+    print("Generando gráficos de comportamiento de workload...")
+    viz.plot_testing_behavior(csv_path=save_path, n_max=nodes, mode=mode_tag)
 
 if __name__ == "__main__":
     import argparse
