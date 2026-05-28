@@ -1,10 +1,13 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import pandas as pd
-import os
+from utils.config import TOTAL_USERS
 
 def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulated=True):
 
@@ -62,7 +65,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         
         activos = info['activos']
         workload_norm = info['workload']
-        workload = workload_norm * 4000  # Desnormalizamos -> asumiendo 4000 total_users
+        workload = workload_norm * TOTAL_USERS
 
         hist_reward.append(reward)
 
@@ -122,7 +125,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         'ram_mean': hist_ram_total,
         'latency_mean': hist_latency,
         'error_mean': hist_errors,
-        'workload': [w / 4000 for w in hist_workload],
+        'workload': [w / TOTAL_USERS for w in hist_workload],
         'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del test guardadas en: {save_path}")

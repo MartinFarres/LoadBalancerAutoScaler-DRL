@@ -113,13 +113,14 @@ class WorkloadBehaviorCallback(BaseCallback):
     Callback personalizado para registrar el comportamiento de workload por step,
     incluyendo etapa del entrenamiento (early/middle/late).
     """
-    def __init__(self, total_timesteps: int, save_dir: str = "./training_results", 
+    def __init__(self, total_timesteps: int, save_dir: str = "./training_results",
                  file_name: str = "workload_behavior.csv", verbose: int = 0):
         super().__init__(verbose)
         self.total_timesteps = total_timesteps
         self.save_dir = save_dir
         self.csv_path = os.path.join(save_dir, file_name)
         os.makedirs(save_dir, exist_ok=True)
+        self._row_buffer: list = []
         self._init_csv()
     
     def _init_csv(self):
@@ -156,15 +157,25 @@ class WorkloadBehaviorCallback(BaseCallback):
             else:
                 stage = "late"
         
-        # Escribir fila en CSV
+        self._row_buffer.append({
+            'timestep': timestep,
+            'workload': float(workload),
+            'active_containers': int(active_containers),
+            'stage': stage
+        })
+        if len(self._row_buffer) >= 1000:
+            self._flush()
+
+        return True
+
+    def _flush(self):
+        if not self._row_buffer:
+            return
         fieldnames = ['timestep', 'workload', 'active_containers', 'stage']
         with open(self.csv_path, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writerow({
-                'timestep': timestep,
-                'workload': float(workload),
-                'active_containers': int(active_containers),
-                'stage': stage
-            })
-        
-        return True
+            writer.writerows(self._row_buffer)
+        self._row_buffer = []
+
+    def _on_training_end(self):
+        self._flush()

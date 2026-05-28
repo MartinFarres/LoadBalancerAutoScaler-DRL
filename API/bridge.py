@@ -1,7 +1,11 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI
 from pydantic import BaseModel
 from ClusterOrchestration import ClusterOrchestration
 from schemas import AgentAction, ContainerMetrics, ClusterMetrics
+from utils.config import TOTAL_USERS
 
 app = FastAPI()
 clusterOrchestration = ClusterOrchestration()
@@ -36,7 +40,7 @@ def get_metrics() -> ClusterMetrics:
     return ClusterMetrics(nodes=nodes, workload_norm=workload_norm)
 
 @app.post("/workload")
-def post_workload(user_count: int, total_users: int = 4000):
+def post_workload(user_count: int, total_users: int = TOTAL_USERS):
     """Called by Locust tick() to report current user count."""
     clusterOrchestration.last_workload_norm = min(1.0, user_count / total_users)
     return {"status": "ok"}

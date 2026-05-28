@@ -45,6 +45,7 @@ class LoadBalancerEnv(gym.Env):
 
         # Memoria para la Espera Dinamica
         self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+        self.last_scale_direction: int = 0  # -1 = down, 0 = hold, 1 = up
 
         # Variables exclusivas para el modo simulado
         if self.simulated:
@@ -56,6 +57,7 @@ class LoadBalancerEnv(gym.Env):
         super().reset(seed=seed)
         self.current_step = 0
         self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
+        self.last_scale_direction = 0
         
         if not self.simulated:
             try:
@@ -132,7 +134,11 @@ class LoadBalancerEnv(gym.Env):
         cant_active_containers = sum(1 for i in range(self.n_max) if self.actual_state[(i * 6) + 5] == 1.0)
         
         reward = self.reward_function(self.actual_state, action, cant_active_containers)
-        
+
+        curr_dir = 1 if scale_desision >= 0.7 else (-1 if scale_desision <= 0.3 else 0)
+        if curr_dir != 0:
+            self.last_scale_direction = curr_dir
+
         terminated = (cant_active_containers == 0)
         truncated = (self.current_step >= self.max_steps)
 
@@ -293,8 +299,8 @@ class LoadBalancerEnv(gym.Env):
                 
                 new_state[idx:idx+6] = [
                     min(1.0, max(0.0, cpu_usage)),             # cpu_usg
-                    ram_usage,                                 # ram_usg_pct 
-                    1.0,                                       # ram_total_normalize
+                    ram_usage,                                 # ram_usg_pct
+                    ram_usage,                                 # ram_total_normalize (same scale, equal limit)
                     min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
                     min(1.0, max(0.0, errors)),                # error_rate
                     1.0                                        # status (ACTIVO)
@@ -385,10 +391,12 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
             
-            # Penalización por escalar demasiado frecuentemente (chattering)
+            # Penalización por chattering: solo penaliza reversiones de dirección (up→down o down→up)
             scale_decision = action[-1]
-            if scale_decision <= 0.3 or scale_decision >= 0.7:
-                # Castigamos la acción de escalar para forzar la inercia
+            curr_dir = 1 if scale_decision >= 0.7 else (-1 if scale_decision <= 0.3 else 0)
+            if (curr_dir != 0
+                    and self.last_scale_direction != 0
+                    and curr_dir != self.last_scale_direction):
                 total_reward -= W_SCALE_FRICTION
 
             return float(total_reward)

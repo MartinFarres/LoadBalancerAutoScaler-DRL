@@ -3,10 +3,12 @@ import socket
 import csv
 import io
 import os
+import sys
 import concurrent.futures
-import ctypes
 import time
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import ContainerMetrics
+from utils.config import CONTAINER_CPU_CORES
 
 
 class ClusterOrchestration():
@@ -27,20 +29,17 @@ class ClusterOrchestration():
         
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
-        self.max_req_rate = 60.0 
-        
-        # Fast Metrics C Collector
-        self.lib = ctypes.CDLL('./libfastmetrics.so')
-        self.lib.get_container_rx_bytes.argtypes = [ctypes.c_int, ctypes.c_char_p] # Args expected
-        self.lib.get_container_rx_bytes.restype = ctypes.c_longlong # Return type expected
-        self.containersPIDs = []
+        self.max_req_rate = 60.0
         self.containersLongIDs = []
 
         # CPU dic for cpu_usg calculation
         self.last_cpu_stats = {} # (cpu_ns, timestamp_ns)
 
+        # HAProxy cumulative counters from previous step
+        self.last_hrsp_stats: dict = {}  # {node_name: {"hrsp_5xx": int, "stot": int}}
+
         # CPU Limit -> half per core
-        self.cpu_limit_per_container = 500_000_000 / 1_000_000_000
+        self.cpu_limit_per_container = CONTAINER_CPU_CORES
 
         self.start()
 
@@ -68,7 +67,7 @@ class ClusterOrchestration():
                                        network="lbas_network", 
                                        detach=True, 
                                        name=f"{self.node_name}_{i}",
-                                       nano_cpus=500000000, # limits container to 50% of the cpus capacity
+                                       nano_cpus=int(CONTAINER_CPU_CORES * 1_000_000_000),
                                        labels={"role": "lbas_node"})
         
            
@@ -88,11 +87,10 @@ class ClusterOrchestration():
                                                 detach=True,
                                                 labels={"role":"lbas_haproxy"})
         
-        # Gets all containers PIDs
+        # Gets all containers long IDs for cgroup paths
         for i in range(self.n_max):
             container_attrs = self.client.containers.get(f"{self.node_name}_{i}").attrs
             long_id = container_attrs['Id']
-            self.containersPIDs.append(container_attrs['State']['Pid'])
             self.containersLongIDs.append(container_attrs['Id']) # Cache the 64-char Long ID
 
             # Inicializamos el trackeo de CPU para este contenedor
@@ -220,18 +218,8 @@ class ClusterOrchestration():
         nombre_nodo = f"{self.node_name}_{i}"
         
         try:
-            target_pid = self.containersPIDs[i]
             long_id = self.containersLongIDs[i]
-            
-            # Metricas de red via C
-            interface_name = b"eth0" 
-            rx_bytes = self.lib.get_container_rx_bytes(target_pid, interface_name)
-            
-            if rx_bytes != -1:
-                metric_obj.network_rx = rx_bytes
-                pass
 
-            
             # Metricas de memoria usando File I/O Cgroups
             # Si es una version mas vieja de linux puede ser: /sys/fs/cgroup/memory/docker/{long_id}/memory.usage_in_bytes
             mem_path = f"/sys/fs/cgroup/system.slice/docker-{long_id}.scope/memory.current"
@@ -244,8 +232,8 @@ class ClusterOrchestration():
                         ram_usg_bytes = int(raw_mem)
                         ram_limit_bytes = self.max_memory * 1024 * 1024
                         
-                        metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes 
-                        metric_obj.ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory
+                        metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes
+                        metric_obj.ram_total_normalize = (ram_usg_bytes / (1024**2)) / self.max_memory
            
             # Metricas CPU via Cgroups File I/O
             # Si usa v1: /sys/fs/cgroup/cpuacct/docker/{long_id}/cpuacct.stat
@@ -372,7 +360,15 @@ class ClusterOrchestration():
                 # HAProxy devuelve un string vacío '' si no hay datos de latencia aún.
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila.get("rtime") else 0.0
-                errores = float(fila["hrsp_5xx"]) if fila.get("hrsp_5xx") else 0.0
+
+                # hrsp_5xx is a cumulative counter since HAProxy boot — compute per-step delta
+                curr_5xx  = int(fila.get("hrsp_5xx") or 0)
+                curr_stot = int(fila.get("stot")     or 0)
+                last      = self.last_hrsp_stats.get(nombre_nodo, {"hrsp_5xx": 0, "stot": 0})
+                delta_5xx  = max(0, curr_5xx  - last["hrsp_5xx"])
+                delta_stot = max(0, curr_stot - last["stot"])
+                errores    = delta_5xx / delta_stot if delta_stot > 0 else 0.0
+                self.last_hrsp_stats[nombre_nodo] = {"hrsp_5xx": curr_5xx, "stot": curr_stot}
                 try:
                     status = 1.0 if int(fila.get("weight") or 0) > 0 else 0.0
                 except (ValueError, TypeError):
