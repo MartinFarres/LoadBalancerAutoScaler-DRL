@@ -8,6 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
+from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -15,7 +16,7 @@ class LoadBalancerEnv(gym.Env):
     Soporta modo Real (FastAPI/Docker) y modo Simulado (Matemático)
     """
     
-    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
+    def __init__(self, n_max=10, max_steps=100, max_memory=MAX_MEMORY, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
         self.max_memory = max_memory 
@@ -70,7 +71,7 @@ class LoadBalancerEnv(gym.Env):
             # Reseteo del estado simulado
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen.reset()
+            self.traffic_gen.reset(seed=seed)
             self.actual_state = self.get_simulated_metrics(action=None)
 
         info = {"mensaje": f"Cluster reiniciado a 1 instancia (Simulado: {self.simulated})"}
@@ -185,24 +186,26 @@ class LoadBalancerEnv(gym.Env):
             for i in range(self.n_max):
                 
                 cpu_raw = nodes[i]["cpu_usg"]
+                
                 cpu_norm = min(1.0, max(0.0, cpu_raw))
                 
                 ram_raw = nodes[i]["ram_usg_pct"]
                 ram_norm = min(1.0, max(0.0, ram_raw))
-                
-                ram_tot_raw = nodes[i]["ram_total_normalize"]
-                ram_tot_norm = min(1.0, max(0.0, ram_tot_raw))
-                
+
+                # Profundidad de cola (qcur de HAProxy) normalizada con el techo configurable
+                queue_raw = nodes[i]["queue_depth"]
+                queue_norm = min(1.0, max(0.0, queue_raw / MAX_QUEUE_DEPTH))
+
                 # Convertimos milisegundos a una escala 0.0 - 1.0
                 latency_raw = nodes[i]["latency"]
                 latency_norm = min(1.0, latency_raw / MAX_LATENCY_MS)
-                
+
                 error_raw = nodes[i]["error_rate"]
                 error_norm = min(1.0, max(0.0, error_raw))
-                
+
                 status = float(nodes[i]["status"])
-                
-                new_state.extend([cpu_norm, ram_norm, ram_tot_norm, latency_norm, error_norm, status])
+
+                new_state.extend([cpu_norm, ram_norm, queue_norm, latency_norm, error_norm, status])
                 
         except Exception as e:
             print(f"Error leyendo API: {e}")
@@ -296,11 +299,14 @@ class LoadBalancerEnv(gym.Env):
                 # Ruido simulando el Garbage Collector de Python (liberando y ocupando memoria)
                 ram_noise = np.random.normal(0, 0.02)
                 ram_usage = min(1.0, max(0.0, ram_usage + ram_noise))
-                
+
+                # Profundidad de cola: L de Little normalizada con el mismo techo que el qcur real
+                queue_norm = min(1.0, max(0.0, L_concurrent / MAX_QUEUE_DEPTH))
+
                 new_state[idx:idx+6] = [
                     min(1.0, max(0.0, cpu_usage)),             # cpu_usg
                     ram_usage,                                 # ram_usg_pct
-                    ram_usage,                                 # ram_total_normalize (same scale, equal limit)
+                    queue_norm,                                # queue_depth normalizada (L de Little / MAX_QUEUE_DEPTH)
                     min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
                     min(1.0, max(0.0, errors)),                # error_rate
                     1.0                                        # status (ACTIVO)

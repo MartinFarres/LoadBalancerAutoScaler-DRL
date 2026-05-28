@@ -7,7 +7,7 @@ from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import pandas as pd
-from utils.config import TOTAL_USERS
+from utils.config import TOTAL_USERS, SEED
 
 def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulated=True):
 
@@ -37,7 +37,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
 
     model = PPO.load(f"ppo_lb_production_ready_{nodes}_nodes")
 
-    obs, info = raw_env.reset(42)
+    obs, info = raw_env.reset(SEED)
 
     print("Begin traffic simulation...")
     print("-" * 110)

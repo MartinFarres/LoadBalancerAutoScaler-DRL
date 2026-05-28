@@ -5,7 +5,7 @@ from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import pandas as pd
-from utils.config import TOTAL_USERS
+from utils.config import TOTAL_USERS, SEED
 
 class PIDController:
     def __init__(self, kp, ki, kd, setpoint):
@@ -37,7 +37,7 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     print("Iniciando prueba del Baseline PID (Teoría de Control Clásica)...")
     
     env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max, testing=True)
-    obs, info = env.reset(42)
+    obs, info = env.reset(SEED)
     
     # Target: Mantener la CPU promedio al 60% (0.60)
     pid = PIDController(kp=1.5, ki=0.1, kd=0.5, setpoint=0.60)

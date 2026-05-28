@@ -5,13 +5,13 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from ClusterOrchestration import ClusterOrchestration
 from schemas import AgentAction, ContainerMetrics, ClusterMetrics
-from utils.config import TOTAL_USERS
+from utils.config import TOTAL_USERS, MAX_MEMORY
 
 app = FastAPI()
 clusterOrchestration = ClusterOrchestration()
 
 @app.post("/init")
-def initialize_cluster_orchestration(n_max: int = 10, max_memory: int = 1024, node_name: str = "lbas_node"):
+def initialize_cluster_orchestration(n_max: int = 10, max_memory: int = MAX_MEMORY, node_name: str = "lbas_node"):
     clusterOrchestration.set_params_and_start(n_max, max_memory, node_name)
     return {"status": "initialized", "n_max": n_max}
 

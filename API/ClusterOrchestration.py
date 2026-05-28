@@ -8,14 +8,14 @@ import concurrent.futures
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import ContainerMetrics
-from utils.config import CONTAINER_CPU_CORES
+from utils.config import CONTAINER_CPU_CORES, MAX_MEMORY
 
 
 class ClusterOrchestration():
     def __init__(self):
         pass
 
-    def set_params_and_start(self, n_max=10, max_memory=1024, node_name="lbas_node"):
+    def set_params_and_start(self, n_max=10, max_memory=MAX_MEMORY, node_name="lbas_node"):
         
         self.n_max = n_max
         self.node_name = node_name
@@ -63,11 +63,12 @@ class ClusterOrchestration():
 
         # Creates all n containers
         for i in range(self.n_max):
-            self.client.containers.run(image=self.image_container, 
-                                       network="lbas_network", 
-                                       detach=True, 
+            self.client.containers.run(image=self.image_container,
+                                       network="lbas_network",
+                                       detach=True,
                                        name=f"{self.node_name}_{i}",
                                        nano_cpus=int(CONTAINER_CPU_CORES * 1_000_000_000),
+                                       mem_limit=f"{self.max_memory}m",
                                        labels={"role": "lbas_node"})
         
            
@@ -231,9 +232,8 @@ class ClusterOrchestration():
                     if raw_mem.isdigit():
                         ram_usg_bytes = int(raw_mem)
                         ram_limit_bytes = self.max_memory * 1024 * 1024
-                        
+
                         metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes
-                        metric_obj.ram_total_normalize = (ram_usg_bytes / (1024**2)) / self.max_memory
            
             # Metricas CPU via Cgroups File I/O
             # Si usa v1: /sys/fs/cgroup/cpuacct/docker/{long_id}/cpuacct.stat
@@ -285,10 +285,12 @@ class ClusterOrchestration():
             metric_obj.latency = haproxy_stats_dict[nombre_nodo]["latency"]
             metric_obj.error_rate = haproxy_stats_dict[nombre_nodo]["error_rate"]
             metric_obj.status = haproxy_stats_dict[nombre_nodo]["status"]
+            metric_obj.queue_depth = haproxy_stats_dict[nombre_nodo]["queue_depth"]
         else:
             metric_obj.latency = 0.0
             metric_obj.error_rate = 0.0
             metric_obj.status = 0.0
+            metric_obj.queue_depth = 0.0
 
         return i, metric_obj
 
@@ -361,6 +363,9 @@ class ClusterOrchestration():
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila.get("rtime") else 0.0
 
+                # qcur = requests currently queued for this server (backpressure / saturation signal)
+                cola = float(fila["qcur"]) if fila.get("qcur") else 0.0
+
                 # hrsp_5xx is a cumulative counter since HAProxy boot — compute per-step delta
                 curr_5xx  = int(fila.get("hrsp_5xx") or 0)
                 curr_stot = int(fila.get("stot")     or 0)
@@ -378,7 +383,8 @@ class ClusterOrchestration():
                 haproxy_stats_dict[nombre_nodo] = {
                     "latency": latencia,
                     "error_rate": errores,
-                    "status": status
+                    "status": status,
+                    "queue_depth": cola
                 }
         
         return haproxy_stats_dict

@@ -6,13 +6,13 @@ from visualizer import Visualizer
 import numpy as np
 import time
 import pandas as pd
-from utils.config import TOTAL_USERS
+from utils.config import TOTAL_USERS, SEED
 
 def run_industry_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.csv'):
     print("Iniciando prueba del Baseline de la Industria (Round Robin + Thresholds)...")
     
     env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max, testing=True)
-    obs, info = env.reset(42)
+    obs, info = env.reset(SEED)
     
     # Auto Scaler Tradicional
     CPU_THRESHOLD_UP = 0.75   # Escalar si CPU > 75%
