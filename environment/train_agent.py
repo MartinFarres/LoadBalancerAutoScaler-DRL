@@ -72,7 +72,7 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
             learning_rate=linear_schedule(1.13e-03),
             clip_range=0.3,
             vf_coef=0.5,
-            gamma=0.8622,
+            gamma=0.9,
             ent_coef=0.0001,
             gae_lambda=0.9067,
             n_epochs=3,

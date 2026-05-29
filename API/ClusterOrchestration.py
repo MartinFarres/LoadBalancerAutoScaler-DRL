@@ -8,7 +8,7 @@ import concurrent.futures
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import ContainerMetrics
-from utils.config import CONTAINER_CPU_CORES, MAX_MEMORY
+from utils.config import CONTAINER_CPU_CORES, MAX_MEMORY, SERVER_MAXCONN
 
 
 class ClusterOrchestration():
@@ -302,6 +302,9 @@ class ClusterOrchestration():
             "    maxconn 100000\n",
             "defaults\n",
             "    mode http\n",
+            # Cierra la conexión al servidor tras cada respuesta -> HAProxy re-balancea
+            # POR petición (evita que conexiones keep-alive queden ancladas al nodo 0).
+            "    option http-server-close\n",
             "    timeout connect 5000ms\n",
             "    timeout client  50000ms\n",
             "    timeout server  50000ms\n",
@@ -309,14 +312,22 @@ class ClusterOrchestration():
             "    bind *:80\n",
             "    default_backend servidores_web\n",
             "backend servidores_web\n",
-            "    balance roundrobin\n"
+            # leastconn: cada petición va al nodo con menos conexiones activas -> reparte
+            # mejor cargas CPU-bound de duración variable que roundrobin.
+            "    balance leastconn\n"
         ]
 
+        # maxconn por servidor ≈ workers de Gunicorn (SERVER_MAXCONN): HAProxy admite esa cantidad
+        # de conexiones concurrentes por nodo y encola el excedente en qcur (la señal de backpressure
+        # que observa el agente). Debe ser bajo (≈ workers) para que la cola se forme apenas el nodo
+        # se satura; si es alto, el excedente se acumula dentro de Gunicorn y qcur queda en 0.
+        # (La normalización de qcur usa MAX_QUEUE_DEPTH, que es un parámetro distinto.)
+        server_maxconn = int(SERVER_MAXCONN)
         for i in range(self.n_max):
             if i == 0:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 check \n")
+                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 maxconn {server_maxconn} check \n")
             else:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 check \n")
+                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 maxconn {server_maxconn} check \n")
 
         with open("haproxy.cfg", "w") as f:
             f.writelines(new_lines)

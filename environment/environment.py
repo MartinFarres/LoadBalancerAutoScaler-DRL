@@ -181,7 +181,7 @@ class LoadBalancerEnv(gym.Env):
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
             
-            MAX_LATENCY_MS = 2000.0 # 2 segundos máximo
+            MAX_LATENCY_MS = 1000.0 # 2 segundos máximo
             
             for i in range(self.n_max):
                 
@@ -325,15 +325,15 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward = 0.0
 
-            W_LATENCY = 3.0      
-            W_ERRORS = 3.0      
-            W_COST = 5.0         
-            W_SATURATION = 2.0   
+            W_LATENCY = 5.0      
+            W_ERRORS = 25.0      
+            W_COST = 2.0         
+            W_SATURATION = 10.0   
             W_OVERPROVISION = 3.0 # Penaliza nodos idle 
             
             # Nuevos pesos para control de estabilidad
             W_SATURATION_PREVENTIVE = 1.0 
-            W_SCALE_FRICTION = 3.0 # Fricción para evitar el chattering (serrucho)
+            W_SCALE_FRICTION = 1.0 # Fricción para evitar el chattering (serrucho)
             W_QUEUE = 2.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
             
             if cant_active_containers == 0:
@@ -345,10 +345,10 @@ class LoadBalancerEnv(gym.Env):
             CPU_TARGET_MAX = 0.75  # Frontera superior segura (antes del colapso)
 
             # Variables para acumular
-            avg_latency = 0.0
+            total_latency_penalty_accum = 0.0
             avg_errors = 0.0
             avg_queue = 0.0
-            avg_ram_sat = 0.0
+            total_ram_penalty_accum = 0.0
             total_cpu_penalty_accum = 0.0  # Unificamos todas las penalizaciones de CPU aquí
             
             for i in range(self.n_max):
@@ -362,10 +362,18 @@ class LoadBalancerEnv(gym.Env):
                     latency = state[idx_base + 3]
                     errores = state[idx_base + 4]
 
-                    avg_latency += latency
                     avg_errors += errores
                     avg_queue += queue
                     
+                    # LOGICA DE LATENCIA POR NODO ---
+                    node_latency_penalty = 0.0
+                    
+                    if latency > 0.1:
+                        
+                        node_latency_penalty = W_LATENCY * (latency ** 2)
+
+                    total_latency_penalty_accum += node_latency_penalty
+
                     # LOGICA DE CPU POR NODO ---
                     node_cpu_penalty = 0.0
                     
@@ -386,29 +394,22 @@ class LoadBalancerEnv(gym.Env):
                     
         
                     if ram_pct > 0.85:
-                        avg_ram_sat += (ram_pct - 0.85)
+                        total_ram_penalty_accum += W_SATURATION * (ram_pct - 0.85)
                         
             # PROMEDIAMOS las métricas de los nodos encendidos
-            avg_latency /= cant_active_containers
+            latency_penalty_final = total_latency_penalty_accum / cant_active_containers
             avg_errors /= cant_active_containers
             avg_queue /= cant_active_containers
             cpu_penalty_final = total_cpu_penalty_accum / cant_active_containers
-            avg_ram_sat /= cant_active_containers
-            
-            # Calculo de penalizaciones
-            
-            # Tope de Latencia (SLA Cap)
-            if avg_latency <= 0.1:
-                latency_penalty = 0.0
-            else:
-                latency_penalty = min(W_LATENCY * (avg_latency ** 2), 5.0 ) # tope maximo al castigo de latencia
-                
-            error_penalty = W_ERRORS * avg_errors 
-            cost_penalty = W_COST * (cant_active_containers / self.n_max)
-            queue_penalty = W_QUEUE * avg_queue / MAX_QUEUE_DEPTH # Normalizamos la cola
+            ram_penalty_final = total_ram_penalty_accum / cant_active_containers
             
 
-            total_reward -= (latency_penalty + error_penalty + cost_penalty + queue_penalty + cpu_penalty_final)
+            # Calculo de penalizaciones
+            error_penalty = W_ERRORS * avg_errors 
+            cost_penalty = W_COST * (cant_active_containers / self.n_max)
+            queue_penalty = W_QUEUE * avg_queue             
+
+            total_reward -= (latency_penalty_final + error_penalty + cost_penalty + ram_penalty_final + queue_penalty + cpu_penalty_final)
             
             # Penalización por chattering: solo penaliza reversiones de dirección (up→down o down→up)
             scale_decision = action[-1]
