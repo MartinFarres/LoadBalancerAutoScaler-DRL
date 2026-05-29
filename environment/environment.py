@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
-from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH
+from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -245,7 +245,10 @@ class LoadBalancerEnv(gym.Env):
                 # M/M/1 -----------------------------------------------------------------------------------------
                 
                 # Params Base
-                max_capacity = self.traffic_gen.total_users / self.n_max  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                # mu: tasa de servicio POR NODO, constante y desacoplada de n_max (capacidad fisica fija).
+                # Antes era total_users/n_max, lo que debilitaba cada nodo al aumentar n_max y dejaba la
+                # flota completa exactamente en rho=1 durante el pico (cero margen -> sobreaprovisionamiento).
+                max_capacity = NODE_CAPACITY
                 base_latency_ms = 50.0 # S: Tiempo de servicio base sin hacer cola
                 
                 # Tasa de llegada (lambda)
@@ -322,26 +325,31 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward = 0.0
 
-            W_LATENCY = 2.0      
-            W_ERRORS = 50.0      
-            W_COST = 1.0         
-            W_SATURATION = 1.0   
-            W_RAM_SATURATION = 1.0
-            W_OVERPROVISION = 2.0 # Penaliza nodos idle 
+            W_LATENCY = 3.0      
+            W_ERRORS = 3.0      
+            W_COST = 5.0         
+            W_SATURATION = 2.0   
+            W_OVERPROVISION = 3.0 # Penaliza nodos idle 
             
             # Nuevos pesos para control de estabilidad
-            W_SATURATION_PREVENTIVE = 2.0 
-            W_SCALE_FRICTION = 2.0 # Fricción para evitar el chattering (serrucho)
+            W_SATURATION_PREVENTIVE = 1.0 
+            W_SCALE_FRICTION = 3.0 # Fricción para evitar el chattering (serrucho)
+            W_QUEUE = 2.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
             
             if cant_active_containers == 0:
                 return -200.0
 
+            # Banda objetivo de utilización POR NODO: dentro de [CPU_TARGET_MIN, CPU_TARGET_MAX]
+            # un nodo opera de forma eficiente y no genera penalización.
+            CPU_TARGET_MIN = 0.40
+            CPU_TARGET_MAX = 0.75  # Frontera superior segura (antes del colapso)
+
             # Variables para acumular
             avg_latency = 0.0
             avg_errors = 0.0
-            avg_cpu = 0.0
-            avg_cpu_sat = 0.0
+            avg_queue = 0.0
             avg_ram_sat = 0.0
+            total_cpu_penalty_accum = 0.0  # Unificamos todas las penalizaciones de CPU aquí
             
             for i in range(self.n_max):
                 idx_base = i * 6 
@@ -350,23 +358,41 @@ class LoadBalancerEnv(gym.Env):
                 if status == 1.0:
                     cpu_pct = state[idx_base]
                     ram_pct = state[idx_base + 1]
+                    queue = state[idx_base + 2]
                     latency = state[idx_base + 3]
                     errores = state[idx_base + 4]
 
                     avg_latency += latency
                     avg_errors += errores
-                    avg_cpu += cpu_pct
+                    avg_queue += queue
                     
-                    if cpu_pct > 0.80:
-                        avg_cpu_sat += (cpu_pct - 0.80)
+                    # LOGICA DE CPU POR NODO ---
+                    node_cpu_penalty = 0.0
+                    
+                    if cpu_pct < CPU_TARGET_MIN:
+                        # Castigo por ocioso
+                        node_cpu_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - cpu_pct)
+                        
+                    elif cpu_pct > CPU_TARGET_MAX:
+                        # Castigo preventivo base (aplica a todo lo que pase de 0.75)
+                        node_cpu_penalty = W_SATURATION_PREVENTIVE * (cpu_pct - CPU_TARGET_MAX)
+                        
+                        # Si ADEMÁS pasa de 0.85, le SUMAMOS el castigo de saturación extrema
+                        # Esto asegura que la curva siempre suba y sea imposible hacer trampa
+                        if cpu_pct > 0.85:
+                            node_cpu_penalty += W_SATURATION * (cpu_pct - 0.85)
+                            
+                    total_cpu_penalty_accum += node_cpu_penalty
+                    
+        
                     if ram_pct > 0.85:
                         avg_ram_sat += (ram_pct - 0.85)
                         
             # PROMEDIAMOS las métricas de los nodos encendidos
             avg_latency /= cant_active_containers
             avg_errors /= cant_active_containers
-            avg_cpu /= cant_active_containers
-            avg_cpu_sat /= cant_active_containers
+            avg_queue /= cant_active_containers
+            cpu_penalty_final = total_cpu_penalty_accum / cant_active_containers
             avg_ram_sat /= cant_active_containers
             
             # Calculo de penalizaciones
@@ -375,27 +401,14 @@ class LoadBalancerEnv(gym.Env):
             if avg_latency <= 0.1:
                 latency_penalty = 0.0
             else:
-                latency_penalty = W_LATENCY * (avg_latency ** 2) 
+                latency_penalty = min(W_LATENCY * (avg_latency ** 2), 5.0 ) # tope maximo al castigo de latencia
                 
             error_penalty = W_ERRORS * avg_errors 
             cost_penalty = W_COST * (cant_active_containers / self.n_max)
-            saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
+            queue_penalty = W_QUEUE * avg_queue / MAX_QUEUE_DEPTH # Normalizamos la cola
             
-            # Zona muerta de cpu. Si el cpu promedio está entre 40% y 75%, no hay penalización extra por overprovision.
-            # Agrego un poco de heuristica humana para acelerar la convergencia del agente 
-            CPU_TARGET_MIN = 0.40
-            CPU_TARGET_MAX = 0.75  # Frontera superior segura
-            
-            if avg_cpu < CPU_TARGET_MIN:
-                # Castigo por tener contenedores ociosos
-                overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
-            elif avg_cpu > CPU_TARGET_MAX:
-                # Castigo suave preventivo por acercarse al límite antes del colapso
-                overprovision_penalty = W_SATURATION_PREVENTIVE * (avg_cpu - CPU_TARGET_MAX)
-            else:
-                overprovision_penalty = 0.0
 
-            total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
+            total_reward -= (latency_penalty + error_penalty + cost_penalty + queue_penalty + cpu_penalty_final)
             
             # Penalización por chattering: solo penaliza reversiones de dirección (up→down o down→up)
             scale_decision = action[-1]
