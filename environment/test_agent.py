@@ -1,10 +1,13 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import pandas as pd
-import os
+from utils.config import TOTAL_USERS, SEED
 
 def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulated=True):
 
@@ -34,7 +37,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
 
     model = PPO.load(f"ppo_lb_production_ready_{nodes}_nodes")
 
-    obs, info = raw_env.reset(42)
+    obs, info = raw_env.reset(SEED)
 
     print("Begin traffic simulation...")
     print("-" * 110)
@@ -45,6 +48,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
     hist_reward = []
     hist_cpu_total = []
     hist_ram_total = []
+    hist_queue = []
     hist_latency = []
     hist_errors = []
     hist_workload = []
@@ -62,7 +66,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         
         activos = info['activos']
         workload_norm = info['workload']
-        workload = workload_norm * 4000  # Desnormalizamos -> asumiendo 4000 total_users
+        workload = workload_norm * TOTAL_USERS
 
         hist_reward.append(reward)
 
@@ -73,18 +77,21 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         
         cpu_total = 0.0
         ram_total = 0.0
+        avg_queue = 0.0
         avg_latency = 0.0
         total_errors = 0.0
-        
+
         for j in range(activos):
             cpu_total += obs[j * 6]      # CPU
             ram_total += obs[j * 6 + 1]  #  RAM (% de uso)
+            avg_queue += obs[j * 6 + 2]  #  Queue depth (normalizado)
             avg_latency += obs[j * 6 + 3] #  Latency
             total_errors += obs[j * 6 + 4] # Error Rate
-            
+
         if activos > 0:
             cpu_total /= activos  # Sacamos el promedio real
-            ram_total /= activos  # Sacamos el promedio real 
+            ram_total /= activos  # Sacamos el promedio real
+            avg_queue /= activos
             avg_latency /= activos
         
         # Conteo de violaciones SLA (latencia > 0.5 )
@@ -94,6 +101,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         # Guardamos
         hist_cpu_total.append(cpu_total)
         hist_ram_total.append(ram_total)
+        hist_queue.append(avg_queue)
         hist_latency.append(avg_latency)
         hist_errors.append(total_errors)
         hist_activos.append(activos)
@@ -120,9 +128,10 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         'reward': hist_reward,
         'cpu_mean': hist_cpu_total,
         'ram_mean': hist_ram_total,
+        'queue_mean': hist_queue,
         'latency_mean': hist_latency,
         'error_mean': hist_errors,
-        'workload': [w / 4000 for w in hist_workload],
+        'workload': [w / TOTAL_USERS for w in hist_workload],
         'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del test guardadas en: {save_path}")

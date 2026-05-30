@@ -215,7 +215,7 @@ def down_processes(processes):
     print("\n [Limpieza] Apagando servicios en segundo plano...")
     
     try:
-        requests.get("http://127.0.0.1:8000/cleanup", timeout=30)
+        requests.post("http://127.0.0.1:8000/cleanup", timeout=30)
     except:
         pass
 

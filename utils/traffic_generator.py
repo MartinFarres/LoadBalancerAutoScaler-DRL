@@ -1,9 +1,13 @@
 # Archivo: utils/traffic_generator.py
 import math
+import sys
+import os
 import numpy as np
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.config import TOTAL_USERS
 
 class TrafficGenerator:
-    def __init__(self, total_users=4000, min_duration=60, max_duration=900, testing=False):
+    def __init__(self, total_users=TOTAL_USERS, min_duration=60, max_duration=900, testing=False):
         self.total_users = total_users
         self.min_duration = min_duration
         self.max_duration = max_duration

@@ -14,6 +14,8 @@ from stable_baselines3.common.utils import get_schedule_fn
 from stable_baselines3.common.buffers import RolloutBuffer
 import wandb
 from wandb.integration.sb3 import WandbCallback
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.config import SEED
 
 class StepLoggerCallback(BaseCallback):
     """
@@ -70,12 +72,13 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
             learning_rate=linear_schedule(1.13e-03),
             clip_range=0.3,
             vf_coef=0.5,
-            gamma=0.8622,
+            gamma=0.9,
             ent_coef=0.0001,
             gae_lambda=0.9067,
             n_epochs=3,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
+            seed=SEED,
         device='cpu')
 
     metrics_callback = TrainingMetricsCallback(save_dir=f"./training_results/phase1_{nodes}_nodes", file_name=file)
@@ -212,9 +215,9 @@ def run_wandb_sweep(nodes=5, iterations=100000):
         env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        model = PPO("MlpPolicy", 
-                    env_sim, 
-                    verbose=0, 
+        model = PPO("MlpPolicy",
+                    env_sim,
+                    verbose=0,
                     learning_rate=linear_schedule(config.learning_rate),
                     gamma=config.gamma,
                     n_steps=config.n_steps,
@@ -227,6 +230,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
                     # target_kl=config.target_kl,
                     normalize_advantage=config.normalize_advantage,
                     tensorboard_log=f"./logs_tensorboard/sweep_{run.id}",
+                    seed=SEED,
                     device=device)
 
         wandb_callback = WandbCallback(

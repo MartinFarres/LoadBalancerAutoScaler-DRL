@@ -8,6 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
+from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY
 
 class LoadBalancerEnv(gym.Env):
     """
@@ -15,7 +16,7 @@ class LoadBalancerEnv(gym.Env):
     Soporta modo Real (FastAPI/Docker) y modo Simulado (Matemático)
     """
     
-    def __init__(self, n_max=10, max_steps=100, max_memory=1024, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
+    def __init__(self, n_max=10, max_steps=100, max_memory=MAX_MEMORY, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
         self.max_memory = max_memory 
@@ -45,6 +46,7 @@ class LoadBalancerEnv(gym.Env):
 
         # Memoria para la Espera Dinamica
         self.last_weights = np.zeros(self.n_max, dtype=np.float32)
+        self.last_scale_direction: int = 0  # -1 = down, 0 = hold, 1 = up
 
         # Variables exclusivas para el modo simulado
         if self.simulated:
@@ -56,6 +58,7 @@ class LoadBalancerEnv(gym.Env):
         super().reset(seed=seed)
         self.current_step = 0
         self.last_weights = np.zeros(self.n_max, dtype=np.float32) # Reiniciamos la memoria
+        self.last_scale_direction = 0
         
         if not self.simulated:
             try:
@@ -68,7 +71,7 @@ class LoadBalancerEnv(gym.Env):
             # Reseteo del estado simulado
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen.reset()
+            self.traffic_gen.reset(seed=seed)
             self.actual_state = self.get_simulated_metrics(action=None)
 
         info = {"mensaje": f"Cluster reiniciado a 1 instancia (Simulado: {self.simulated})"}
@@ -132,32 +135,39 @@ class LoadBalancerEnv(gym.Env):
         cant_active_containers = sum(1 for i in range(self.n_max) if self.actual_state[(i * 6) + 5] == 1.0)
         
         reward = self.reward_function(self.actual_state, action, cant_active_containers)
-        
+
+        curr_dir = 1 if scale_desision >= 0.7 else (-1 if scale_desision <= 0.3 else 0)
+        if curr_dir != 0:
+            self.last_scale_direction = curr_dir
+
         terminated = (cant_active_containers == 0)
         truncated = (self.current_step >= self.max_steps)
 
         # Sacarmos promedio de info de nodos
-        cpu_t = ram_t = lat_t = err_t = 0.0
+        cpu_t = ram_t = queue_t = lat_t = err_t = 0.0
         if cant_active_containers > 0:
             for i in range(self.n_max):
                 idx = i * 6
                 if self.actual_state[idx + 5] == 1.0: # Si está ACTIVO
                     cpu_t += self.actual_state[idx]
                     ram_t += self.actual_state[idx+1]
+                    queue_t += self.actual_state[idx+2]
                     lat_t += self.actual_state[idx+3]
                     err_t += self.actual_state[idx+4]
-                    
+
             cpu_t /= cant_active_containers
             ram_t /= cant_active_containers
+            queue_t /= cant_active_containers
             lat_t /= cant_active_containers
             err_t /= cant_active_containers
-        
+
 
         info = {
-            "activos": cant_active_containers, 
+            "activos": cant_active_containers,
             "step": self.current_step,
             "cpu_avg": float(cpu_t),
             "ram_avg": float(ram_t),
+            "queue_avg": float(queue_t),
             "latency_avg": float(lat_t),
             "error_avg": float(err_t),
             "workload": float(self.actual_state[-1]) #add workload info to log
@@ -173,30 +183,37 @@ class LoadBalancerEnv(gym.Env):
 
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
-            
-            MAX_LATENCY_MS = 2000.0 # 2 segundos máximo
-            
+
+            MAX_LATENCY_MS = 1000.0 # 2 segundos máximo
+
+            # La cola es fleet-wide (qcur global del backend) replicada en cada nodo activo.
+            # La normalizamos por (n_activos * MAX_QUEUE_DEPTH), igual que la cola simulada.
+            n_active = sum(1 for i in range(self.n_max) if float(nodes[i]["status"]) == 1.0)
+            queue_denom = max(1, n_active) * MAX_QUEUE_DEPTH
+
             for i in range(self.n_max):
                 
                 cpu_raw = nodes[i]["cpu_usg"]
+                
                 cpu_norm = min(1.0, max(0.0, cpu_raw))
                 
                 ram_raw = nodes[i]["ram_usg_pct"]
                 ram_norm = min(1.0, max(0.0, ram_raw))
-                
-                ram_tot_raw = nodes[i]["ram_total_normalize"]
-                ram_tot_norm = min(1.0, max(0.0, ram_tot_raw))
-                
+
+                # Cola fleet-wide (qcur del backend) normalizada por (n_activos * MAX_QUEUE_DEPTH)
+                queue_raw = nodes[i]["queue_depth"]
+                queue_norm = min(1.0, max(0.0, queue_raw / queue_denom))
+
                 # Convertimos milisegundos a una escala 0.0 - 1.0
                 latency_raw = nodes[i]["latency"]
                 latency_norm = min(1.0, latency_raw / MAX_LATENCY_MS)
-                
+
                 error_raw = nodes[i]["error_rate"]
                 error_norm = min(1.0, max(0.0, error_raw))
-                
+
                 status = float(nodes[i]["status"])
-                
-                new_state.extend([cpu_norm, ram_norm, ram_tot_norm, latency_norm, error_norm, status])
+
+                new_state.extend([cpu_norm, ram_norm, queue_norm, latency_norm, error_norm, status])
                 
         except Exception as e:
             print(f"Error leyendo API: {e}")
@@ -230,13 +247,20 @@ class LoadBalancerEnv(gym.Env):
 
         if sum_w == 0 and self.sim_active_containers[0]: norm_weights[0] = 1.0
 
+        # Cola fleet-wide: sumamos Lq (peticiones EN ESPERA, M/M/1) de todos los nodos activos.
+        # Es el analogo simulado del qcur global del backend de HAProxy (cola compartida bajo leastconn).
+        total_Lq = 0.0
+
         for i in range(self.n_max):
             idx = i * 6
             if self.sim_active_containers[i]:
                 # M/M/1 -----------------------------------------------------------------------------------------
                 
                 # Params Base
-                max_capacity = self.traffic_gen.total_users / self.n_max  # mu: Tasa de servicio: peticiones maximas tericas por paso
+                # mu: tasa de servicio POR NODO, constante y desacoplada de n_max (capacidad fisica fija).
+                # Antes era total_users/n_max, lo que debilitaba cada nodo al aumentar n_max y dejaba la
+                # flota completa exactamente en rho=1 durante el pico (cero margen -> sobreaprovisionamiento).
+                max_capacity = NODE_CAPACITY
                 base_latency_ms = 50.0 # S: Tiempo de servicio base sin hacer cola
                 
                 # Tasa de llegada (lambda)
@@ -290,17 +314,31 @@ class LoadBalancerEnv(gym.Env):
                 # Ruido simulando el Garbage Collector de Python (liberando y ocupando memoria)
                 ram_noise = np.random.normal(0, 0.02)
                 ram_usage = min(1.0, max(0.0, ram_usage + ram_noise))
-                
+
+                # Lq = peticiones en espera (largo de cola M/M/1) = L_total - rho (en servicio).
+                # Lo acumulamos a la cola fleet-wide; el slot per-nodo se rellena tras el bucle.
+                total_Lq += max(0.0, L_concurrent - rho)
+
                 new_state[idx:idx+6] = [
                     min(1.0, max(0.0, cpu_usage)),             # cpu_usg
-                    ram_usage,                                 # ram_usg_pct 
-                    1.0,                                       # ram_total_normalize
+                    ram_usage,                                 # ram_usg_pct
+                    0.0,                                       # queue_depth: placeholder, se rellena con la cola fleet-wide
                     min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
                     min(1.0, max(0.0, errors)),                # error_rate
                     1.0                                        # status (ACTIVO)
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
+
+        # Normalizamos la cola fleet-wide por (n_activos * MAX_QUEUE_DEPTH) y la difundimos a cada
+        # nodo activo. Mismo valor compartido en todos los slots: igual que el qcur global real.
+        n_active_sim = int(np.sum(self.sim_active_containers))
+        if n_active_sim > 0:
+            queue_shared = min(1.0, max(0.0, total_Lq / (n_active_sim * MAX_QUEUE_DEPTH)))
+            for i in range(self.n_max):
+                if self.sim_active_containers[i]:
+                    new_state[i * 6 + 2] = queue_shared
+
         # At the end, before returning new_state:
         workload_norm = np.float32(total_workload / self.traffic_gen.total_users)
         new_state = np.append(new_state, workload_norm)
@@ -310,26 +348,31 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward = 0.0
 
-            W_LATENCY = 2.0      
-            W_ERRORS = 50.0      
-            W_COST = 1.0         
-            W_SATURATION = 1.0   
-            W_RAM_SATURATION = 1.0
-            W_OVERPROVISION = 2.0 # Penaliza nodos idle 
+            W_LATENCY = 5.0      
+            W_ERRORS = 25.0      
+            W_COST = 2.0         
+            W_SATURATION = 10.0   
+            W_OVERPROVISION = 3.0 # Penaliza nodos idle 
             
             # Nuevos pesos para control de estabilidad
-            W_SATURATION_PREVENTIVE = 2.0 
-            W_SCALE_FRICTION = 2.0 # Fricción para evitar el chattering (serrucho)
+            W_SATURATION_PREVENTIVE = 1.0 
+            W_SCALE_FRICTION = 1.0 # Fricción para evitar el chattering (serrucho)
+            W_QUEUE = 2.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
             
             if cant_active_containers == 0:
                 return -200.0
 
+            # Banda objetivo de utilización POR NODO: dentro de [CPU_TARGET_MIN, CPU_TARGET_MAX]
+            # un nodo opera de forma eficiente y no genera penalización.
+            CPU_TARGET_MIN = 0.40
+            CPU_TARGET_MAX = 0.75  # Frontera superior segura (antes del colapso)
+
             # Variables para acumular
-            avg_latency = 0.0
+            total_latency_penalty_accum = 0.0
             avg_errors = 0.0
-            avg_cpu = 0.0
-            avg_cpu_sat = 0.0
-            avg_ram_sat = 0.0
+            avg_queue = 0.0
+            total_ram_penalty_accum = 0.0
+            total_cpu_penalty_accum = 0.0  # Unificamos todas las penalizaciones de CPU aquí
             
             for i in range(self.n_max):
                 idx_base = i * 6 
@@ -338,57 +381,65 @@ class LoadBalancerEnv(gym.Env):
                 if status == 1.0:
                     cpu_pct = state[idx_base]
                     ram_pct = state[idx_base + 1]
+                    queue = state[idx_base + 2]
                     latency = state[idx_base + 3]
                     errores = state[idx_base + 4]
 
-                    avg_latency += latency
                     avg_errors += errores
-                    avg_cpu += cpu_pct
+                    avg_queue += queue
                     
-                    if cpu_pct > 0.80:
-                        avg_cpu_sat += (cpu_pct - 0.80)
+                    # LOGICA DE LATENCIA POR NODO ---
+                    node_latency_penalty = 0.0
+                    
+                    if latency > 0.1:
+                        
+                        node_latency_penalty = W_LATENCY * (latency ** 2)
+
+                    total_latency_penalty_accum += node_latency_penalty
+
+                    # LOGICA DE CPU POR NODO ---
+                    node_cpu_penalty = 0.0
+                    
+                    if cpu_pct < CPU_TARGET_MIN:
+                        # Castigo por ocioso
+                        node_cpu_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - cpu_pct)
+                        
+                    elif cpu_pct > CPU_TARGET_MAX:
+                        # Castigo preventivo base (aplica a todo lo que pase de 0.75)
+                        node_cpu_penalty = W_SATURATION_PREVENTIVE * (cpu_pct - CPU_TARGET_MAX)
+                        
+                        # Si ADEMÁS pasa de 0.85, le SUMAMOS el castigo de saturación extrema
+                        # Esto asegura que la curva siempre suba y sea imposible hacer trampa
+                        if cpu_pct > 0.85:
+                            node_cpu_penalty += W_SATURATION * (cpu_pct - 0.85)
+                            
+                    total_cpu_penalty_accum += node_cpu_penalty
+                    
+        
                     if ram_pct > 0.85:
-                        avg_ram_sat += (ram_pct - 0.85)
+                        total_ram_penalty_accum += W_SATURATION * (ram_pct - 0.85)
                         
             # PROMEDIAMOS las métricas de los nodos encendidos
-            avg_latency /= cant_active_containers
+            latency_penalty_final = total_latency_penalty_accum / cant_active_containers
             avg_errors /= cant_active_containers
-            avg_cpu /= cant_active_containers
-            avg_cpu_sat /= cant_active_containers
-            avg_ram_sat /= cant_active_containers
+            avg_queue /= cant_active_containers
+            cpu_penalty_final = total_cpu_penalty_accum / cant_active_containers
+            ram_penalty_final = total_ram_penalty_accum / cant_active_containers
             
+
             # Calculo de penalizaciones
-            
-            # Tope de Latencia (SLA Cap)
-            if avg_latency <= 0.1:
-                latency_penalty = 0.0
-            else:
-                latency_penalty = W_LATENCY * (avg_latency ** 2) 
-                
             error_penalty = W_ERRORS * avg_errors 
             cost_penalty = W_COST * (cant_active_containers / self.n_max)
-            saturation_penalty = (W_SATURATION * avg_cpu_sat) + (W_RAM_SATURATION * avg_ram_sat)
-            
-            # Zona muerta de cpu. Si el cpu promedio está entre 40% y 75%, no hay penalización extra por overprovision.
-            # Agrego un poco de heuristica humana para acelerar la convergencia del agente 
-            CPU_TARGET_MIN = 0.40
-            CPU_TARGET_MAX = 0.75  # Frontera superior segura
-            
-            if avg_cpu < CPU_TARGET_MIN:
-                # Castigo por tener contenedores ociosos
-                overprovision_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - avg_cpu) * (cant_active_containers / self.n_max)
-            elif avg_cpu > CPU_TARGET_MAX:
-                # Castigo suave preventivo por acercarse al límite antes del colapso
-                overprovision_penalty = W_SATURATION_PREVENTIVE * (avg_cpu - CPU_TARGET_MAX)
-            else:
-                overprovision_penalty = 0.0
+            queue_penalty = W_QUEUE * avg_queue             
 
-            total_reward -= (latency_penalty + error_penalty + cost_penalty + saturation_penalty + overprovision_penalty)
+            total_reward -= (latency_penalty_final + error_penalty + cost_penalty + ram_penalty_final + queue_penalty + cpu_penalty_final)
             
-            # Penalización por escalar demasiado frecuentemente (chattering)
+            # Penalización por chattering: solo penaliza reversiones de dirección (up→down o down→up)
             scale_decision = action[-1]
-            if scale_decision <= 0.3 or scale_decision >= 0.7:
-                # Castigamos la acción de escalar para forzar la inercia
+            curr_dir = 1 if scale_decision >= 0.7 else (-1 if scale_decision <= 0.3 else 0)
+            if (curr_dir != 0
+                    and self.last_scale_direction != 0
+                    and curr_dir != self.last_scale_direction):
                 total_reward -= W_SCALE_FRICTION
 
             return float(total_reward)
