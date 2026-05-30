@@ -285,7 +285,9 @@ class ClusterOrchestration():
             metric_obj.latency = haproxy_stats_dict[nombre_nodo]["latency"]
             metric_obj.error_rate = haproxy_stats_dict[nombre_nodo]["error_rate"]
             metric_obj.status = haproxy_stats_dict[nombre_nodo]["status"]
-            metric_obj.queue_depth = haproxy_stats_dict[nombre_nodo]["queue_depth"]
+            # Cola fleet-wide (qcur del backend) replicada solo en nodos activos; los apagados reportan 0,
+            # igual que en la simulación (un nodo inactivo lleva una tupla de ceros).
+            metric_obj.queue_depth = haproxy_stats_dict[nombre_nodo]["queue_depth"] if metric_obj.status == 1.0 else 0.0
         else:
             metric_obj.latency = 0.0
             metric_obj.error_rate = 0.0
@@ -361,6 +363,10 @@ class ClusterOrchestration():
             csv_haproxy_res = csv_haproxy_res[2:]
 
         haproxy_stats_dict = {}
+        # qcur del backend = cola pendiente GLOBAL. Con `balance leastconn` el excedente se encola
+        # aquí (a nivel backend), no en los servidores: el qcur per-servidor queda siempre en 0.
+        # Por eso usamos esta cola fleet-wide como señal de backpressure (ver _fetch_single_container_metrics).
+        backend_queue = 0.0
 
         # StringIO convierte un string gigante en un "archivo virtual" para que el módulo csv lo pueda leer
         lector_csv = csv.DictReader(io.StringIO(csv_haproxy_res))
@@ -369,13 +375,15 @@ class ClusterOrchestration():
             # Solo nos interesan las filas de los nodos, no las del frontend general
             if fila["pxname"] == "servidores_web":
                 nombre_nodo = fila["svname"] # Ej: "lbas_node_0"
-                
+
+                # Fila agregada del backend: capturamos su qcur (la cola pendiente global) y seguimos.
+                if nombre_nodo == "BACKEND":
+                    backend_queue = float(fila["qcur"]) if fila.get("qcur") else 0.0
+                    continue
+
                 # HAProxy devuelve un string vacío '' si no hay datos de latencia aún.
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila.get("rtime") else 0.0
-
-                # qcur = requests currently queued for this server (backpressure / saturation signal)
-                cola = float(fila["qcur"]) if fila.get("qcur") else 0.0
 
                 # hrsp_5xx is a cumulative counter since HAProxy boot — compute per-step delta
                 curr_5xx  = int(fila.get("hrsp_5xx") or 0)
@@ -395,7 +403,12 @@ class ClusterOrchestration():
                     "latency": latencia,
                     "error_rate": errores,
                     "status": status,
-                    "queue_depth": cola
                 }
-        
+
+        # La fila BACKEND llega al final del "show stat", así que asignamos su qcur (cola fleet-wide)
+        # a cada nodo recién ahora. El qcur per-servidor es siempre 0 bajo leastconn; esta cola global
+        # es la señal real de backpressure. La normalización per-nodo ocurre en el env.
+        for stats in haproxy_stats_dict.values():
+            stats["queue_depth"] = backend_queue
+
         return haproxy_stats_dict

@@ -48,6 +48,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
     hist_reward = []
     hist_cpu_total = []
     hist_ram_total = []
+    hist_queue = []
     hist_latency = []
     hist_errors = []
     hist_workload = []
@@ -76,18 +77,21 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         
         cpu_total = 0.0
         ram_total = 0.0
+        avg_queue = 0.0
         avg_latency = 0.0
         total_errors = 0.0
-        
+
         for j in range(activos):
             cpu_total += obs[j * 6]      # CPU
             ram_total += obs[j * 6 + 1]  #  RAM (% de uso)
+            avg_queue += obs[j * 6 + 2]  #  Queue depth (normalizado)
             avg_latency += obs[j * 6 + 3] #  Latency
             total_errors += obs[j * 6 + 4] # Error Rate
-            
+
         if activos > 0:
             cpu_total /= activos  # Sacamos el promedio real
-            ram_total /= activos  # Sacamos el promedio real 
+            ram_total /= activos  # Sacamos el promedio real
+            avg_queue /= activos
             avg_latency /= activos
         
         # Conteo de violaciones SLA (latencia > 0.5 )
@@ -97,6 +101,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         # Guardamos
         hist_cpu_total.append(cpu_total)
         hist_ram_total.append(ram_total)
+        hist_queue.append(avg_queue)
         hist_latency.append(avg_latency)
         hist_errors.append(total_errors)
         hist_activos.append(activos)
@@ -123,6 +128,7 @@ def run_test_agent(nodes=5, iterations=5000, file='testing_metrics.csv', simulat
         'reward': hist_reward,
         'cpu_mean': hist_cpu_total,
         'ram_mean': hist_ram_total,
+        'queue_mean': hist_queue,
         'latency_mean': hist_latency,
         'error_mean': hist_errors,
         'workload': [w / TOTAL_USERS for w in hist_workload],

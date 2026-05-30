@@ -17,15 +17,16 @@ class TrainingMetricsCallback(BaseCallback):
             'timestep': [], 
             'rollout/ep_rew_mean': [], 
             'rollout/ep_len_mean': [],
-            'rollout/cpu_mean': [],       
+            'rollout/cpu_mean': [],
             'rollout/ram_mean': [],
+            'rollout/queue_mean': [],
             'rollout/latency_mean': [],
             'rollout/error_mean': [],
             'rollout/workload_mean': [] # Agregue para guardar el promedio de workload por rollout
         }
         self.train_history = {'train/policy_loss': [], 'train/value_loss': []}
-        
-        self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': [], 'workload': []}
+
+        self.step_metrics_buffer = {'cpu': [], 'ram': [], 'queue': [], 'latency': [], 'errors': [], 'workload': []}
         
         self._init_csv()
     
@@ -72,6 +73,7 @@ class TrainingMetricsCallback(BaseCallback):
             if "cpu_avg" in info:
                 self.step_metrics_buffer['cpu'].append(info['cpu_avg'])
                 self.step_metrics_buffer['ram'].append(info['ram_avg'])
+                self.step_metrics_buffer['queue'].append(info['queue_avg'])
                 self.step_metrics_buffer['latency'].append(info['latency_avg'])
                 self.step_metrics_buffer['errors'].append(info['error_avg'])
                 self.step_metrics_buffer['workload'].append(info['workload']) # workload por paso
@@ -89,6 +91,8 @@ class TrainingMetricsCallback(BaseCallback):
                 np.mean(self.step_metrics_buffer['cpu']) if self.step_metrics_buffer['cpu'] else 0.0)
             self.rollout_history['rollout/ram_mean'].append(
                 np.mean(self.step_metrics_buffer['ram']) if self.step_metrics_buffer['ram'] else 0.0)
+            self.rollout_history['rollout/queue_mean'].append(
+                np.mean(self.step_metrics_buffer['queue']) if self.step_metrics_buffer['queue'] else 0.0)
             self.rollout_history['rollout/latency_mean'].append(
                 np.mean(self.step_metrics_buffer['latency']) if self.step_metrics_buffer['latency'] else 0.0)
             self.rollout_history['rollout/error_mean'].append(  
@@ -97,7 +101,7 @@ class TrainingMetricsCallback(BaseCallback):
                 np.mean(self.step_metrics_buffer['workload']) if self.step_metrics_buffer['workload'] else 0.0) # Promedio de workload
             
             # Limpiamos el buffer para el próximo ciclo
-            self.step_metrics_buffer = {'cpu': [], 'ram': [], 'latency': [], 'errors': [], 'workload': []}
+            self.step_metrics_buffer = {'cpu': [], 'ram': [], 'queue': [], 'latency': [], 'errors': [], 'workload': []}
             
             # Métricas de pérdida
             self.train_history['train/policy_loss'].append(self._get_logger_value('train/policy_gradient_loss'))

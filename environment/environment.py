@@ -144,27 +144,30 @@ class LoadBalancerEnv(gym.Env):
         truncated = (self.current_step >= self.max_steps)
 
         # Sacarmos promedio de info de nodos
-        cpu_t = ram_t = lat_t = err_t = 0.0
+        cpu_t = ram_t = queue_t = lat_t = err_t = 0.0
         if cant_active_containers > 0:
             for i in range(self.n_max):
                 idx = i * 6
                 if self.actual_state[idx + 5] == 1.0: # Si está ACTIVO
                     cpu_t += self.actual_state[idx]
                     ram_t += self.actual_state[idx+1]
+                    queue_t += self.actual_state[idx+2]
                     lat_t += self.actual_state[idx+3]
                     err_t += self.actual_state[idx+4]
-                    
+
             cpu_t /= cant_active_containers
             ram_t /= cant_active_containers
+            queue_t /= cant_active_containers
             lat_t /= cant_active_containers
             err_t /= cant_active_containers
-        
+
 
         info = {
-            "activos": cant_active_containers, 
+            "activos": cant_active_containers,
             "step": self.current_step,
             "cpu_avg": float(cpu_t),
             "ram_avg": float(ram_t),
+            "queue_avg": float(queue_t),
             "latency_avg": float(lat_t),
             "error_avg": float(err_t),
             "workload": float(self.actual_state[-1]) #add workload info to log
@@ -180,9 +183,14 @@ class LoadBalancerEnv(gym.Env):
 
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
-            
+
             MAX_LATENCY_MS = 1000.0 # 2 segundos máximo
-            
+
+            # La cola es fleet-wide (qcur global del backend) replicada en cada nodo activo.
+            # La normalizamos por (n_activos * MAX_QUEUE_DEPTH), igual que la cola simulada.
+            n_active = sum(1 for i in range(self.n_max) if float(nodes[i]["status"]) == 1.0)
+            queue_denom = max(1, n_active) * MAX_QUEUE_DEPTH
+
             for i in range(self.n_max):
                 
                 cpu_raw = nodes[i]["cpu_usg"]
@@ -192,9 +200,9 @@ class LoadBalancerEnv(gym.Env):
                 ram_raw = nodes[i]["ram_usg_pct"]
                 ram_norm = min(1.0, max(0.0, ram_raw))
 
-                # Profundidad de cola (qcur de HAProxy) normalizada con el techo configurable
+                # Cola fleet-wide (qcur del backend) normalizada por (n_activos * MAX_QUEUE_DEPTH)
                 queue_raw = nodes[i]["queue_depth"]
-                queue_norm = min(1.0, max(0.0, queue_raw / MAX_QUEUE_DEPTH))
+                queue_norm = min(1.0, max(0.0, queue_raw / queue_denom))
 
                 # Convertimos milisegundos a una escala 0.0 - 1.0
                 latency_raw = nodes[i]["latency"]
@@ -238,6 +246,10 @@ class LoadBalancerEnv(gym.Env):
         norm_weights = effective_weights / sum_w if sum_w > 0 else effective_weights
 
         if sum_w == 0 and self.sim_active_containers[0]: norm_weights[0] = 1.0
+
+        # Cola fleet-wide: sumamos Lq (peticiones EN ESPERA, M/M/1) de todos los nodos activos.
+        # Es el analogo simulado del qcur global del backend de HAProxy (cola compartida bajo leastconn).
+        total_Lq = 0.0
 
         for i in range(self.n_max):
             idx = i * 6
@@ -303,19 +315,30 @@ class LoadBalancerEnv(gym.Env):
                 ram_noise = np.random.normal(0, 0.02)
                 ram_usage = min(1.0, max(0.0, ram_usage + ram_noise))
 
-                # Profundidad de cola: L de Little normalizada con el mismo techo que el qcur real
-                queue_norm = min(1.0, max(0.0, L_concurrent / MAX_QUEUE_DEPTH))
+                # Lq = peticiones en espera (largo de cola M/M/1) = L_total - rho (en servicio).
+                # Lo acumulamos a la cola fleet-wide; el slot per-nodo se rellena tras el bucle.
+                total_Lq += max(0.0, L_concurrent - rho)
 
                 new_state[idx:idx+6] = [
                     min(1.0, max(0.0, cpu_usage)),             # cpu_usg
                     ram_usage,                                 # ram_usg_pct
-                    queue_norm,                                # queue_depth normalizada (L de Little / MAX_QUEUE_DEPTH)
+                    0.0,                                       # queue_depth: placeholder, se rellena con la cola fleet-wide
                     min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
                     min(1.0, max(0.0, errors)),                # error_rate
                     1.0                                        # status (ACTIVO)
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
+
+        # Normalizamos la cola fleet-wide por (n_activos * MAX_QUEUE_DEPTH) y la difundimos a cada
+        # nodo activo. Mismo valor compartido en todos los slots: igual que el qcur global real.
+        n_active_sim = int(np.sum(self.sim_active_containers))
+        if n_active_sim > 0:
+            queue_shared = min(1.0, max(0.0, total_Lq / (n_active_sim * MAX_QUEUE_DEPTH)))
+            for i in range(self.n_max):
+                if self.sim_active_containers[i]:
+                    new_state[i * 6 + 2] = queue_shared
+
         # At the end, before returning new_state:
         workload_norm = np.float32(total_workload / self.traffic_gen.total_users)
         new_state = np.append(new_state, workload_norm)
