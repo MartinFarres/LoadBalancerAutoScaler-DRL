@@ -293,20 +293,20 @@ The reward is a penalty-based signal designed to balance service quality against
 All penalties are summed and negated; the agent maximizes by minimizing the total penalty:
 
 ```
-R = -(latency + errors + cost + saturation + overprovision)  - scale_friction
+R = -(latency + errors + cost + cpu_saturation + ram_saturation + queue + overprovision) - scale_friction
 ```
 
 | Component             | Weight | Penalizes                                                                 |
 | --------------------- | ------ | ------------------------------------------------------------------------- |
-| Latency               | 2.0    | High response times (squared; free below a 0.1 normalized floor)          |
+| Latency               | 10.0   | High response times (squared; free below a 0.1 normalized floor)          |
 | Errors                | 50.0   | HTTP 5xx responses                                                        |
 | Cost                  | 1.0    | Active containers (`active / n_max`)                                      |
-| CPU Saturation        | 1.0    | CPU usage above 80%                                                       |
-| RAM Saturation        | 1.0    | RAM usage above 85%                                                       |
-| Overprovision         | 2.0    | Idle containers (avg CPU below the 40% target)                            |
-| Preventive saturation | 2.0    | Avg CPU above the 75% safe ceiling (soft pre-collapse penalty)            |
-| Scale friction        | 2.0    | Reversing scale direction (up→down / down→up) to suppress chattering      |
-| Total failure         | −200   | All containers offline (terminal)                                        |
+| CPU & RAM Saturation  | 15.0   | CPU usage above 85% and RAM usage above 85%                               |
+| Overprovision         | 1.0    | Idle containers (avg CPU below the 40% target)                            |
+| Preventive saturation | 5.0    | Avg CPU above the 75% safe ceiling (soft pre-collapse penalty)            |
+| Queue Backpressure    | 5.0    | Request queue depth (early indicator of impending latency and errors)     |
+| Scale friction        | 0.5    | Reversing scale direction (up→down / down→up) to suppress chattering      |
+| Total failure         | −200.0 | All containers offline (terminal)                                         |
 
 > Weights live in `reward_function` in [`environment/environment.py`](environment/environment.py).
 

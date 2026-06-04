@@ -55,12 +55,11 @@ class TrafficGenerator:
         user_count = max(10.0, user_count)
         user_count += np.random.normal(0, user_count * 0.05)
 
-        prob = np.random.randint(1, 101)
-        if prob <= 2: 
-            user_count = self.load_min
-        elif prob >= 99: 
-            user_count = self.load_max
-
+        # NOTA: se eliminó el clamp instantáneo a load_min/load_max (prob<=2 / prob>=99).
+        # Esos saltos teletransportaban la carga entre extremos en un solo tick, imposibles
+        # de seguir para un actuador de ±1 nodo/paso y poco realistas. Las funciones de
+        # tráfico ya alcanzan ambos extremos de forma gradual; el ruido gaussiano de arriba
+        # aporta la variabilidad fina.
         return max(10, min(user_count, self.total_users))
 
     def _generate_new_cycle_parameters(self, current_time):
