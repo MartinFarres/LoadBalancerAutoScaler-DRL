@@ -316,7 +316,8 @@ class ClusterOrchestration():
             "backend servidores_web\n",
             # leastconn: cada petición va al nodo con menos conexiones activas -> reparte
             # mejor cargas CPU-bound de duración variable que roundrobin.
-            "    balance leastconn\n"
+            "    balance leastconn\n",
+            "    timeout queue 30000ms\n"
         ]
 
         # maxconn por servidor ≈ workers de Gunicorn (SERVER_MAXCONN): HAProxy admite esa cantidad
@@ -327,9 +328,9 @@ class ClusterOrchestration():
         server_maxconn = int(SERVER_MAXCONN)
         for i in range(self.n_max):
             if i == 0:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 maxconn {server_maxconn} check \n")
+                new_lines.append(f"    server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 maxconn {server_maxconn} check\n")
             else:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 maxconn {server_maxconn} check \n")
+                new_lines.append(f"    server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 maxconn {server_maxconn} check\n")
 
         with open("haproxy.cfg", "w") as f:
             f.writelines(new_lines)

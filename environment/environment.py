@@ -10,6 +10,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
 from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY
 
+# Intervalo de reloj fijo (segundos) entre pasos del agente en modo real. Reemplaza la espera
+# dinamica anterior para que la carga de trafico (impulsada por el reloj de Locust) evolucione
+# una cantidad consistente por paso. Debe ser >= al tiempo que tarda HAProxy en redistribuir el
+# trafico y en producir una ventana de medicion de CPU estable.
+STEP_INTERVAL_SECONDS = 1.5
+
 class LoadBalancerEnv(gym.Env):
     """
     Entorno PPO para Balanceo de Carga y Auto-scaling (LBDRL)
@@ -53,6 +59,13 @@ class LoadBalancerEnv(gym.Env):
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
             self.traffic_gen = TrafficGenerator(testing=self.testing)
+            # Reloj de trafico CONTINUO (no se reinicia por episodio). Antes el ciclo de trafico
+            # se reiniciaba en cada reset() y la carga se leia con current_step (que vuelve a 0),
+            # asi que cada episodio solo veia el ~20% inicial (zona baja) de la funcion y nunca
+            # alcanzaba load_max. Con un reloj continuo cada episodio arranca en una fase distinta
+            # del ciclo (incluido el pico), igual que el Locust real que corre sin parar.
+            self.traffic_clock = 0
+            self._traffic_seeded = False
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -71,7 +84,13 @@ class LoadBalancerEnv(gym.Env):
             # Reseteo del estado simulado
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen.reset(seed=seed)
+            # Solo sembramos el RNG / iniciamos el ciclo la PRIMERA vez (reproducibilidad).
+            # En episodios posteriores NO reiniciamos el ciclo: el reloj continuo deja que el
+            # trafico avance sin parar, asi distintos episodios ven distintas fases (y picos).
+            if not self._traffic_seeded:
+                self.traffic_gen.reset(seed=seed)
+                self.traffic_clock = 0
+                self._traffic_seeded = True
             self.actual_state = self.get_simulated_metrics(action=None)
 
         info = {"mensaje": f"Cluster reiniciado a 1 instancia (Simulado: {self.simulated})"}
@@ -93,29 +112,22 @@ class LoadBalancerEnv(gym.Env):
             except Exception as e:
                 print(f"Action request failed: {e}")
 
-            # ESPERA DINAMICA
-            # Escalo el cluster?
-            is_scaling = scale_desision >= 0.7 or scale_desision <= 0.3
-            
-            # Cambio de pesos drastico?
-            weight_diff = np.max(np.abs(raw_weights - self.last_weights))
-            is_shifting_traffic = weight_diff > 0.15
-            
-            if is_scaling:
-                # Cambio fisico: HAProxy se reinicia y Docker levanta/baja contenedores.
-                time.sleep(3.0) 
-            elif is_shifting_traffic:
-                # Cambio logico: HAProxy redirige tráfico, necesitamos que la latencia y CPU se actualicen.
-                time.sleep(1.5)
-            else:
-                # Estado de reposo: El agente no hizo nada. Solo leemos el siguiente tick de CPU.
-                time.sleep(0.4) 
-                
+            # CADENCIA FIJA POR PASO
+            # Antes la espera era dinamica (3.0 / 1.5 / 0.4s segun la accion), lo que hacia que
+            # cada paso consumiera una cantidad distinta de tiempo de reloj. Como el generador de
+            # trafico real avanza con el reloj de Locust (wall-clock), eso provocaba que la carga
+            # saltara cantidades variables por paso: el agente entrenado en sim (delta constante
+            # por paso) no podia seguirla. Fijamos un intervalo unico para que el delta de carga
+            # por paso sea consistente y mas cercano al de la simulacion.
+            time.sleep(STEP_INTERVAL_SECONDS)
+
             self.actual_state = self.get_real_metrics()
             
             # Guardamos los pesos actuales para compararlos en el proximo step
             self.last_weights = np.copy(raw_weights)
         else:
+            # Avanzamos el reloj de trafico continuo (no se reinicia entre episodios).
+            self.traffic_clock += 1
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
             if scale_desision >= 0.7:
@@ -227,8 +239,9 @@ class LoadBalancerEnv(gym.Env):
         return np.array(new_state, dtype=np.float32)
 
     def get_dynamic_simulated_workload(self):
-        # Obtenemos la carga pasándole el step actual de la simulación
-        workload = self.traffic_gen.get_workload(self.current_step)
+        # Usamos el reloj de trafico CONTINUO (no current_step, que se reinicia por episodio)
+        # para que el ciclo de trafico avance sin parar y los episodios cubran todas sus fases.
+        workload = self.traffic_gen.get_workload(self.traffic_clock)
         return workload
 
     def get_simulated_metrics(self, action):
