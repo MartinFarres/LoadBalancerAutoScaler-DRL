@@ -16,8 +16,20 @@ class TrafficGenerator:
         self.function_tick_start = 0
         self.time_limit = 0
         self.function_number = 0
-        
+
         self.testing = testing
+
+        # Estado persistente entre ciclos. La escala de la carga (load_min/load_max) ya no se
+        # re-sortea i.i.d. en cada ciclo (lo que teletransportaba el regimen y hacia el trafico
+        # irreal), sino que evoluciona con un random walk -> autocorrelacion entre ciclos.
+        self.load_min = None
+        self.load_max = None
+        # Ultimo valor de carga emitido; se usa para empalmar suavemente el inicio del nuevo
+        # ciclo con el final del anterior (sin saltos discontinuos en la frontera).
+        self.last_user_count = None
+        # Ticks sobre los que se hace el blend (cross-fade) al empezar un ciclo nuevo.
+        self.transition_ticks = 10
+        self.cycle_start_value = None
 
         self.traffic_strategies = {
             0: self._calc_double_wave,
@@ -39,6 +51,12 @@ class TrafficGenerator:
             np.random.seed(seed)
         self.running_fn = False
         self.function_tick_start = 0
+        # Reiniciamos el estado persistente: el primer ciclo tras un reset sortea su escala
+        # desde cero (no hay ciclo previo del cual partir) y no aplica blend de entrada.
+        self.load_min = None
+        self.load_max = None
+        self.last_user_count = None
+        self.cycle_start_value = None
 
     
     def get_workload(self, current_time):
@@ -46,6 +64,8 @@ class TrafficGenerator:
 
         if not self.running_fn or (relative_time >= self.time_limit):
             self.running_fn = True
+            # Guardamos el ultimo valor emitido para empalmar el nuevo ciclo con el anterior.
+            self.cycle_start_value = self.last_user_count
             self._generate_new_cycle_parameters(current_time)
             relative_time = 0
 
@@ -53,15 +73,25 @@ class TrafficGenerator:
         user_count = strategy_method(relative_time)
 
         user_count = max(10.0, user_count)
+
+        # TRANSICION SUAVE ENTRE CICLOS: durante los primeros transition_ticks del ciclo
+        # interpolamos linealmente entre el ultimo valor del ciclo anterior y el valor que
+        # dicta la nueva funcion, eliminando el salto discontinuo en la frontera.
+        if self.cycle_start_value is not None and relative_time < self.transition_ticks:
+            blend = relative_time / self.transition_ticks
+            user_count = (1.0 - blend) * self.cycle_start_value + blend * user_count
+
         user_count += np.random.normal(0, user_count * 0.05)
 
-        prob = np.random.randint(1, 101)
-        if prob <= 2: 
-            user_count = self.load_min
-        elif prob >= 99: 
-            user_count = self.load_max
-
-        return max(10, min(user_count, self.total_users))
+        # NOTA: se eliminó el clamp instantáneo a load_min/load_max (prob<=2 / prob>=99).
+        # Esos saltos teletransportaban la carga entre extremos en un solo tick, imposibles
+        # de seguir para un actuador de ±1 nodo/paso y poco realistas. Las funciones de
+        # tráfico ya alcanzan ambos extremos de forma gradual; el ruido gaussiano de arriba
+        # aporta la variabilidad fina.
+        final_count = max(10, min(user_count, self.total_users))
+        # Guardamos el valor realmente emitido (post-clamp) para empalmar el proximo ciclo.
+        self.last_user_count = final_count
+        return final_count
 
     def _generate_new_cycle_parameters(self, current_time):
         """Genera todos los parámetros aleatorios para el nuevo ciclo de tráfico."""
@@ -72,9 +102,24 @@ class TrafficGenerator:
         
         self.time_limit = np.random.randint(self.min_duration, self.max_duration)
         self.function_tick_start = current_time
-        
-        self.load_min = self.total_users * np.random.uniform(0.02, 0.25)
-        self.load_max = self.total_users * np.random.uniform(0.30, 1.00) # expandir rango para permitir picos mas bajos
+
+        # PERSISTENCIA ENTRE CICLOS (random walk en la escala de carga).
+        # El primer ciclo (o tras un reset) sortea la escala desde cero. Los ciclos siguientes
+        # parten de la escala anterior y la desplazan un poco (±15% del rango total), de modo que
+        # la carga mantiene autocorrelacion: un periodo de mucho trafico tiende a seguir alto.
+        if self.load_min is None or self.load_max is None:
+            self.load_min = self.total_users * np.random.uniform(0.02, 0.25)
+            self.load_max = self.total_users * np.random.uniform(0.30, 1.00)
+        else:
+            walk_min = self.total_users * np.random.uniform(-0.15, 0.15)
+            walk_max = self.total_users * np.random.uniform(-0.15, 0.15)
+            self.load_min = float(np.clip(self.load_min + walk_min,
+                                          self.total_users * 0.02, self.total_users * 0.25))
+            self.load_max = float(np.clip(self.load_max + walk_max,
+                                          self.total_users * 0.30, self.total_users * 1.00))
+            # Garantizamos un rango minimo para que las funciones no degeneren (max > min).
+            if self.load_max <= self.load_min:
+                self.load_max = min(self.total_users * 1.00, self.load_min + self.total_users * 0.10)
         
         self.shift_peak_one = np.random.uniform(0.1 , 0.4)
         self.shift_peak_two = np.random.uniform(0.6 , 0.9)

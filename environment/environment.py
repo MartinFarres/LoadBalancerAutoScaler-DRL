@@ -10,6 +10,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
 from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY
 
+# Intervalo de reloj fijo (segundos) entre pasos del agente en modo real. Reemplaza la espera
+# dinamica anterior para que la carga de trafico (impulsada por el reloj de Locust) evolucione
+# una cantidad consistente por paso. Debe ser >= al tiempo que tarda HAProxy en redistribuir el
+# trafico y en producir una ventana de medicion de CPU estable.
+STEP_INTERVAL_SECONDS = 1.5
+
 class LoadBalancerEnv(gym.Env):
     """
     Entorno PPO para Balanceo de Carga y Auto-scaling (LBDRL)
@@ -53,6 +59,13 @@ class LoadBalancerEnv(gym.Env):
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
             self.traffic_gen = TrafficGenerator(testing=self.testing)
+            # Reloj de trafico CONTINUO (no se reinicia por episodio). Antes el ciclo de trafico
+            # se reiniciaba en cada reset() y la carga se leia con current_step (que vuelve a 0),
+            # asi que cada episodio solo veia el ~20% inicial (zona baja) de la funcion y nunca
+            # alcanzaba load_max. Con un reloj continuo cada episodio arranca en una fase distinta
+            # del ciclo (incluido el pico), igual que el Locust real que corre sin parar.
+            self.traffic_clock = 0
+            self._traffic_seeded = False
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -71,7 +84,13 @@ class LoadBalancerEnv(gym.Env):
             # Reseteo del estado simulado
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen.reset(seed=seed)
+            # Solo sembramos el RNG / iniciamos el ciclo la PRIMERA vez (reproducibilidad).
+            # En episodios posteriores NO reiniciamos el ciclo: el reloj continuo deja que el
+            # trafico avance sin parar, asi distintos episodios ven distintas fases (y picos).
+            if not self._traffic_seeded:
+                self.traffic_gen.reset(seed=seed)
+                self.traffic_clock = 0
+                self._traffic_seeded = True
             self.actual_state = self.get_simulated_metrics(action=None)
 
         info = {"mensaje": f"Cluster reiniciado a 1 instancia (Simulado: {self.simulated})"}
@@ -93,29 +112,22 @@ class LoadBalancerEnv(gym.Env):
             except Exception as e:
                 print(f"Action request failed: {e}")
 
-            # ESPERA DINAMICA
-            # Escalo el cluster?
-            is_scaling = scale_desision >= 0.7 or scale_desision <= 0.3
-            
-            # Cambio de pesos drastico?
-            weight_diff = np.max(np.abs(raw_weights - self.last_weights))
-            is_shifting_traffic = weight_diff > 0.15
-            
-            if is_scaling:
-                # Cambio fisico: HAProxy se reinicia y Docker levanta/baja contenedores.
-                time.sleep(3.0) 
-            elif is_shifting_traffic:
-                # Cambio logico: HAProxy redirige tráfico, necesitamos que la latencia y CPU se actualicen.
-                time.sleep(1.5)
-            else:
-                # Estado de reposo: El agente no hizo nada. Solo leemos el siguiente tick de CPU.
-                time.sleep(0.4) 
-                
+            # CADENCIA FIJA POR PASO
+            # Antes la espera era dinamica (3.0 / 1.5 / 0.4s segun la accion), lo que hacia que
+            # cada paso consumiera una cantidad distinta de tiempo de reloj. Como el generador de
+            # trafico real avanza con el reloj de Locust (wall-clock), eso provocaba que la carga
+            # saltara cantidades variables por paso: el agente entrenado en sim (delta constante
+            # por paso) no podia seguirla. Fijamos un intervalo unico para que el delta de carga
+            # por paso sea consistente y mas cercano al de la simulacion.
+            time.sleep(STEP_INTERVAL_SECONDS)
+
             self.actual_state = self.get_real_metrics()
             
             # Guardamos los pesos actuales para compararlos en el proximo step
             self.last_weights = np.copy(raw_weights)
         else:
+            # Avanzamos el reloj de trafico continuo (no se reinicia entre episodios).
+            self.traffic_clock += 1
             # Actualizar estado simulado
             #self.actual_state = self.get_simulated_metrics(action)
             if scale_desision >= 0.7:
@@ -184,12 +196,13 @@ class LoadBalancerEnv(gym.Env):
             workload_norm = float(response.get("workload_norm", 0.0))
             nodes = response.get("nodes", response)
 
-            MAX_LATENCY_MS = 1000.0 # 2 segundos máximo
+            MAX_LATENCY_MS = 1000.0 # 1 segundo máximo (debe coincidir con la normalización de latencia simulada)
 
             # La cola es fleet-wide (qcur global del backend) replicada en cada nodo activo.
-            # La normalizamos por (n_activos * MAX_QUEUE_DEPTH), igual que la cola simulada.
-            n_active = sum(1 for i in range(self.n_max) if float(nodes[i]["status"]) == 1.0)
-            queue_denom = max(1, n_active) * MAX_QUEUE_DEPTH
+            # Normalizamos por (n_max * MAX_QUEUE_DEPTH): denominador fijo de capacidad máxima de la flota.
+            # No varía con n_active, así que queue_norm solo cae cuando el qcur real disminuye,
+            # no por el mero hecho de encender un nodo (señal honesta para el agente).
+            queue_denom = self.n_max * MAX_QUEUE_DEPTH
 
             for i in range(self.n_max):
                 
@@ -226,8 +239,9 @@ class LoadBalancerEnv(gym.Env):
         return np.array(new_state, dtype=np.float32)
 
     def get_dynamic_simulated_workload(self):
-        # Obtenemos la carga pasándole el step actual de la simulación
-        workload = self.traffic_gen.get_workload(self.current_step)
+        # Usamos el reloj de trafico CONTINUO (no current_step, que se reinicia por episodio)
+        # para que el ciclo de trafico avance sin parar y los episodios cubran todas sus fases.
+        workload = self.traffic_gen.get_workload(self.traffic_clock)
         return workload
 
     def get_simulated_metrics(self, action):
@@ -323,18 +337,18 @@ class LoadBalancerEnv(gym.Env):
                     min(1.0, max(0.0, cpu_usage)),             # cpu_usg
                     ram_usage,                                 # ram_usg_pct
                     0.0,                                       # queue_depth: placeholder, se rellena con la cola fleet-wide
-                    min(1.0, latency_ms / 2000.0),             # latency normalizada a 2000ms
+                    min(1.0, latency_ms / 1000.0),             # latency normalizada a 1000ms (debe coincidir con MAX_LATENCY_MS de get_real_metrics)
                     min(1.0, max(0.0, errors)),                # error_rate
                     1.0                                        # status (ACTIVO)
                 ]
             else:
                 new_state[idx:idx+6] = [0.0] * 6 # Nodo apagado
 
-        # Normalizamos la cola fleet-wide por (n_activos * MAX_QUEUE_DEPTH) y la difundimos a cada
-        # nodo activo. Mismo valor compartido en todos los slots: igual que el qcur global real.
+        # Normalizamos la cola fleet-wide por (n_max * MAX_QUEUE_DEPTH): denominador fijo igual al real.
+        # No varía con n_active_sim, de forma que queue_shared solo baja cuando la Lq real disminuye.
         n_active_sim = int(np.sum(self.sim_active_containers))
         if n_active_sim > 0:
-            queue_shared = min(1.0, max(0.0, total_Lq / (n_active_sim * MAX_QUEUE_DEPTH)))
+            queue_shared = min(1.0, max(0.0, total_Lq / (self.n_max * MAX_QUEUE_DEPTH)))
             for i in range(self.n_max):
                 if self.sim_active_containers[i]:
                     new_state[i * 6 + 2] = queue_shared
@@ -348,16 +362,16 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward = 0.0
 
-            W_LATENCY = 5.0      
-            W_ERRORS = 25.0      
-            W_COST = 2.0         
-            W_SATURATION = 10.0   
-            W_OVERPROVISION = 3.0 # Penaliza nodos idle 
+            W_LATENCY = 10.0      
+            W_ERRORS = 50.0      
+            W_COST = 5.0         
+            W_SATURATION = 15.0   
+            W_OVERPROVISION = 4.0 # Penaliza nodos idle 
             
             # Nuevos pesos para control de estabilidad
-            W_SATURATION_PREVENTIVE = 1.0 
+            W_SATURATION_PREVENTIVE = 5.0 
             W_SCALE_FRICTION = 1.0 # Fricción para evitar el chattering (serrucho)
-            W_QUEUE = 2.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
+            W_QUEUE = 15.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
             
             if cant_active_containers == 0:
                 return -200.0
@@ -365,7 +379,8 @@ class LoadBalancerEnv(gym.Env):
             # Banda objetivo de utilización POR NODO: dentro de [CPU_TARGET_MIN, CPU_TARGET_MAX]
             # un nodo opera de forma eficiente y no genera penalización.
             CPU_TARGET_MIN = 0.40
-            CPU_TARGET_MAX = 0.75  # Frontera superior segura (antes del colapso)
+            CPU_TARGET_MAX = 0.85  # Frontera superior segura: permite operar los nodos más calientes (menos sobre-aprovisionamiento)
+            CPU_SATURATION_HARD = 0.92  # Umbral de saturación extrema; deja una zona preventiva graduada [CPU_TARGET_MAX, CPU_SATURATION_HARD]
 
             # Variables para acumular
             total_latency_penalty_accum = 0.0
@@ -405,13 +420,13 @@ class LoadBalancerEnv(gym.Env):
                         node_cpu_penalty = W_OVERPROVISION * (CPU_TARGET_MIN - cpu_pct)
                         
                     elif cpu_pct > CPU_TARGET_MAX:
-                        # Castigo preventivo base (aplica a todo lo que pase de 0.75)
+                        # Castigo preventivo base (aplica a todo lo que pase de CPU_TARGET_MAX)
                         node_cpu_penalty = W_SATURATION_PREVENTIVE * (cpu_pct - CPU_TARGET_MAX)
-                        
-                        # Si ADEMÁS pasa de 0.85, le SUMAMOS el castigo de saturación extrema
+
+                        # Si ADEMÁS pasa de CPU_SATURATION_HARD, le SUMAMOS el castigo de saturación extrema
                         # Esto asegura que la curva siempre suba y sea imposible hacer trampa
-                        if cpu_pct > 0.85:
-                            node_cpu_penalty += W_SATURATION * (cpu_pct - 0.85)
+                        if cpu_pct > CPU_SATURATION_HARD:
+                            node_cpu_penalty += W_SATURATION * (cpu_pct - CPU_SATURATION_HARD)
                             
                     total_cpu_penalty_accum += node_cpu_penalty
                     

@@ -62,20 +62,19 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: 75589c1o)
-    # reward=-217 vs. promedio de -345 en los otros 28 runs
+    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ver CLAUDE.md "Key Hyperparameters (Best W&B Run)")
     model = PPO("MlpPolicy",
             env_sim,
             verbose=1,
-            n_steps=128,
+            n_steps=2048,
             batch_size=64,
-            learning_rate=linear_schedule(1.13e-03),
-            clip_range=0.3,
-            vf_coef=0.5,
-            gamma=0.9,
+            learning_rate=linear_schedule(1.94e-03),
+            clip_range=0.1,
+            vf_coef=0.75,
+            gamma=0.91,
             ent_coef=0.0001,
-            gae_lambda=0.9067,
-            n_epochs=3,
+            gae_lambda=0.947,
+            n_epochs=6,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
             seed=SEED,

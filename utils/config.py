@@ -1,7 +1,7 @@
-TOTAL_USERS = 3000       # Max concurrent Locust users; sets workload_norm scale in both sim and real env
-NODE_CAPACITY = 400      # Sim M/M/1 per-node service rate mu (users a single node serves at rho=1), fixed and independent of n_max. Fleet headroom = n_max*NODE_CAPACITY / TOTAL_USERS (e.g. 1.5x at n_max=5).
-CONTAINER_CPU_CORES = 2.0  # CPU cores allocated per Docker container (nano_cpus = CONTAINER_CPU_CORES * 1e9)
+TOTAL_USERS = 120        # Max concurrent Locust users; sets workload_norm scale in both sim and real env. Calibrado para ~1.25x headroom a full scale (n_max*NODE_CAPACITY / TOTAL_USERS), asi el pico necesita ~8 de 10 nodos.
+NODE_CAPACITY = 15       # Sim M/M/1 per-node service rate mu (usuarios que un nodo sirve a rho=1). MEDIDO con utils/calibrate_node_capacity.py a 1.0 core / 4 gunicorn workers: nodo sano <=10 users, rodilla de latencia ~20. Usamos 15 (conservador) para que el agente sobre-aprovisione antes que saturar.
+CONTAINER_CPU_CORES = 1.0  # CPU cores allocated per Docker container (nano_cpus = CONTAINER_CPU_CORES * 1e9). 10 nodos * 1.0 = 10 cores <= 16 del host (sin sobre-suscripcion/throttling).
 MAX_MEMORY = 512         # MB of RAM per Docker container (Docker mem_limit AND the RAM normalization denominator)
 MAX_QUEUE_DEPTH = 3.0     # Queue-depth NORMALIZATION ceiling: maps HAProxy qcur / sim Little's-law L into [0.0, 1.0]
-SERVER_MAXCONN = 4         # HAProxy per-server connection limit ~ Gunicorn workers: cuándo HAProxy empieza a encolar (qcur>0). Mantener bajo (≈workers) para que la cola refleje saturación real.
+SERVER_MAXCONN = 8         # HAProxy per-server connection limit ~ 2x los gunicorn workers (4). Bajo a proposito: HAProxy encola el excedente en qcur (la señal de backpressure que observa el agente) apenas el nodo se satura, y mantiene la cola consistente entre sim y real. Subirlo mucho oculta la saturacion dentro de gunicorn (qcur queda en 0).
 SEED = 42                   # Global reproducibility seed for training, testing, and traffic generation
