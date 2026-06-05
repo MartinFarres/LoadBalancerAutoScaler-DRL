@@ -3,17 +3,19 @@ import socket
 import csv
 import io
 import os
+import sys
 import concurrent.futures
-import ctypes
 import time
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from schemas import ContainerMetrics
+from utils.config import CONTAINER_CPU_CORES, MAX_MEMORY, SERVER_MAXCONN
 
 
 class ClusterOrchestration():
     def __init__(self):
         pass
 
-    def set_params_and_start(self, n_max=10, max_memory=1024, node_name="lbas_node"):
+    def set_params_and_start(self, n_max=10, max_memory=MAX_MEMORY, node_name="lbas_node"):
         
         self.n_max = n_max
         self.node_name = node_name
@@ -27,20 +29,17 @@ class ClusterOrchestration():
         
         # HAProxy image
         self.image_HAProxy = self._get_or_pull("haproxytech/haproxy-alpine:3.0")
-        self.max_req_rate = 60.0 
-        
-        # Fast Metrics C Collector
-        self.lib = ctypes.CDLL('./libfastmetrics.so')
-        self.lib.get_container_rx_bytes.argtypes = [ctypes.c_int, ctypes.c_char_p] # Args expected
-        self.lib.get_container_rx_bytes.restype = ctypes.c_longlong # Return type expected
-        self.containersPIDs = []
+        self.max_req_rate = 60.0
         self.containersLongIDs = []
 
         # CPU dic for cpu_usg calculation
         self.last_cpu_stats = {} # (cpu_ns, timestamp_ns)
 
+        # HAProxy cumulative counters from previous step
+        self.last_hrsp_stats: dict = {}  # {node_name: {"hrsp_5xx": int, "stot": int}}
+
         # CPU Limit -> half per core
-        self.cpu_limit_per_container = 500_000_000 / 1_000_000_000
+        self.cpu_limit_per_container = CONTAINER_CPU_CORES
 
         self.start()
 
@@ -64,11 +63,12 @@ class ClusterOrchestration():
 
         # Creates all n containers
         for i in range(self.n_max):
-            self.client.containers.run(image=self.image_container, 
-                                       network="lbas_network", 
-                                       detach=True, 
+            self.client.containers.run(image=self.image_container,
+                                       network="lbas_network",
+                                       detach=True,
                                        name=f"{self.node_name}_{i}",
-                                       nano_cpus=500000000, # limits container to 50% of the cpus capacity
+                                       nano_cpus=int(CONTAINER_CPU_CORES * 1_000_000_000),
+                                       mem_limit=f"{self.max_memory}m",
                                        labels={"role": "lbas_node"})
         
            
@@ -88,11 +88,10 @@ class ClusterOrchestration():
                                                 detach=True,
                                                 labels={"role":"lbas_haproxy"})
         
-        # Gets all containers PIDs
+        # Gets all containers long IDs for cgroup paths
         for i in range(self.n_max):
             container_attrs = self.client.containers.get(f"{self.node_name}_{i}").attrs
             long_id = container_attrs['Id']
-            self.containersPIDs.append(container_attrs['State']['Pid'])
             self.containersLongIDs.append(container_attrs['Id']) # Cache the 64-char Long ID
 
             # Inicializamos el trackeo de CPU para este contenedor
@@ -102,19 +101,25 @@ class ClusterOrchestration():
             }
 
         
-        
+    @staticmethod
+    def _stop_container(container):
+        try:
+            container.stop()
+        except Exception:
+            pass
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
         
     def stop_all(self):
         # Stop and remove all node containers (including stopped ones)
-        for container in self.client.containers.list(all=True, filters={"label": "role=lbas_node"}):
-            try:
-                container.stop()
-            except Exception:
-                pass
-            try:
-                container.remove(force=True)
-            except Exception:
-                pass
+        containerList = self.client.containers.list(all=True, filters={"label": "role=lbas_node"})
+        
+        # Use of threads for better performance
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            list(ex.map(self._stop_container, containerList))
+
         # Stop and remove HAProxy
         try:
             haproxy = self.client.containers.get("lbas_haproxy")
@@ -214,18 +219,8 @@ class ClusterOrchestration():
         nombre_nodo = f"{self.node_name}_{i}"
         
         try:
-            target_pid = self.containersPIDs[i]
             long_id = self.containersLongIDs[i]
-            
-            # Metricas de red via C
-            interface_name = b"eth0" 
-            rx_bytes = self.lib.get_container_rx_bytes(target_pid, interface_name)
-            
-            if rx_bytes != -1:
-                metric_obj.network_rx = rx_bytes
-                pass
 
-            
             # Metricas de memoria usando File I/O Cgroups
             # Si es una version mas vieja de linux puede ser: /sys/fs/cgroup/memory/docker/{long_id}/memory.usage_in_bytes
             mem_path = f"/sys/fs/cgroup/system.slice/docker-{long_id}.scope/memory.current"
@@ -237,9 +232,8 @@ class ClusterOrchestration():
                     if raw_mem.isdigit():
                         ram_usg_bytes = int(raw_mem)
                         ram_limit_bytes = self.max_memory * 1024 * 1024
-                        
-                        metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes 
-                        metric_obj.ram_total_normalize = (ram_limit_bytes / (1024**2)) / self.max_memory
+
+                        metric_obj.ram_usg_pct = ram_usg_bytes / ram_limit_bytes
            
             # Metricas CPU via Cgroups File I/O
             # Si usa v1: /sys/fs/cgroup/cpuacct/docker/{long_id}/cpuacct.stat
@@ -291,10 +285,14 @@ class ClusterOrchestration():
             metric_obj.latency = haproxy_stats_dict[nombre_nodo]["latency"]
             metric_obj.error_rate = haproxy_stats_dict[nombre_nodo]["error_rate"]
             metric_obj.status = haproxy_stats_dict[nombre_nodo]["status"]
+            # Cola fleet-wide (qcur del backend) replicada solo en nodos activos; los apagados reportan 0,
+            # igual que en la simulación (un nodo inactivo lleva una tupla de ceros).
+            metric_obj.queue_depth = haproxy_stats_dict[nombre_nodo]["queue_depth"] if metric_obj.status == 1.0 else 0.0
         else:
             metric_obj.latency = 0.0
             metric_obj.error_rate = 0.0
             metric_obj.status = 0.0
+            metric_obj.queue_depth = 0.0
 
         return i, metric_obj
 
@@ -306,6 +304,9 @@ class ClusterOrchestration():
             "    maxconn 100000\n",
             "defaults\n",
             "    mode http\n",
+            # Cierra la conexión al servidor tras cada respuesta -> HAProxy re-balancea
+            # POR petición (evita que conexiones keep-alive queden ancladas al nodo 0).
+            "    option http-server-close\n",
             "    timeout connect 5000ms\n",
             "    timeout client  50000ms\n",
             "    timeout server  50000ms\n",
@@ -313,14 +314,23 @@ class ClusterOrchestration():
             "    bind *:80\n",
             "    default_backend servidores_web\n",
             "backend servidores_web\n",
-            "    balance roundrobin\n"
+            # leastconn: cada petición va al nodo con menos conexiones activas -> reparte
+            # mejor cargas CPU-bound de duración variable que roundrobin.
+            "    balance leastconn\n",
+            "    timeout queue 30000ms\n"
         ]
 
+        # maxconn por servidor ≈ workers de Gunicorn (SERVER_MAXCONN): HAProxy admite esa cantidad
+        # de conexiones concurrentes por nodo y encola el excedente en qcur (la señal de backpressure
+        # que observa el agente). Debe ser bajo (≈ workers) para que la cola se forme apenas el nodo
+        # se satura; si es alto, el excedente se acumula dentro de Gunicorn y qcur queda en 0.
+        # (La normalización de qcur usa MAX_QUEUE_DEPTH, que es un parámetro distinto.)
+        server_maxconn = int(SERVER_MAXCONN)
         for i in range(self.n_max):
             if i == 0:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 check \n")
+                new_lines.append(f"    server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 100 maxconn {server_maxconn} check\n")
             else:
-                new_lines.append(f"server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 check \n")
+                new_lines.append(f"    server {self.node_name}_{i} {self.node_name}_{i}:8000 weight 0 maxconn {server_maxconn} check\n")
 
         with open("haproxy.cfg", "w") as f:
             f.writelines(new_lines)
@@ -354,6 +364,10 @@ class ClusterOrchestration():
             csv_haproxy_res = csv_haproxy_res[2:]
 
         haproxy_stats_dict = {}
+        # qcur del backend = cola pendiente GLOBAL. Con `balance leastconn` el excedente se encola
+        # aquí (a nivel backend), no en los servidores: el qcur per-servidor queda siempre en 0.
+        # Por eso usamos esta cola fleet-wide como señal de backpressure (ver _fetch_single_container_metrics).
+        backend_queue = 0.0
 
         # StringIO convierte un string gigante en un "archivo virtual" para que el módulo csv lo pueda leer
         lector_csv = csv.DictReader(io.StringIO(csv_haproxy_res))
@@ -362,11 +376,24 @@ class ClusterOrchestration():
             # Solo nos interesan las filas de los nodos, no las del frontend general
             if fila["pxname"] == "servidores_web":
                 nombre_nodo = fila["svname"] # Ej: "lbas_node_0"
-                
+
+                # Fila agregada del backend: capturamos su qcur (la cola pendiente global) y seguimos.
+                if nombre_nodo == "BACKEND":
+                    backend_queue = float(fila["qcur"]) if fila.get("qcur") else 0.0
+                    continue
+
                 # HAProxy devuelve un string vacío '' si no hay datos de latencia aún.
                 # Nos aseguramos de convertirlo a 0.0
                 latencia = float(fila["rtime"]) if fila.get("rtime") else 0.0
-                errores = float(fila["hrsp_5xx"]) if fila.get("hrsp_5xx") else 0.0
+
+                # hrsp_5xx is a cumulative counter since HAProxy boot — compute per-step delta
+                curr_5xx  = int(fila.get("hrsp_5xx") or 0)
+                curr_stot = int(fila.get("stot")     or 0)
+                last      = self.last_hrsp_stats.get(nombre_nodo, {"hrsp_5xx": 0, "stot": 0})
+                delta_5xx  = max(0, curr_5xx  - last["hrsp_5xx"])
+                delta_stot = max(0, curr_stot - last["stot"])
+                errores    = delta_5xx / delta_stot if delta_stot > 0 else 0.0
+                self.last_hrsp_stats[nombre_nodo] = {"hrsp_5xx": curr_5xx, "stot": curr_stot}
                 try:
                     status = 1.0 if int(fila.get("weight") or 0) > 0 else 0.0
                 except (ValueError, TypeError):
@@ -376,7 +403,13 @@ class ClusterOrchestration():
                 haproxy_stats_dict[nombre_nodo] = {
                     "latency": latencia,
                     "error_rate": errores,
-                    "status": status
+                    "status": status,
                 }
-        
+
+        # La fila BACKEND llega al final del "show stat", así que asignamos su qcur (cola fleet-wide)
+        # a cada nodo recién ahora. El qcur per-servidor es siempre 0 bajo leastconn; esta cola global
+        # es la señal real de backpressure. La normalización per-nodo ocurre en el env.
+        for stats in haproxy_stats_dict.values():
+            stats["queue_depth"] = backend_queue
+
         return haproxy_stats_dict

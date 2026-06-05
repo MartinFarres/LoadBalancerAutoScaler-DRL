@@ -1,8 +1,11 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from environment import LoadBalancerEnv
 from visualizer import Visualizer
 import numpy as np
 import pandas as pd
-import os
+from utils.config import TOTAL_USERS, SEED
 
 class PIDController:
     def __init__(self, kp, ki, kd, setpoint):
@@ -34,7 +37,7 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
     print("Iniciando prueba del Baseline PID (Teoría de Control Clásica)...")
     
     env = LoadBalancerEnv(simulated=simulated, max_steps=steps, n_max=n_max, testing=True)
-    obs, info = env.reset(42)
+    obs, info = env.reset(SEED)
     
     # Target: Mantener la CPU promedio al 60% (0.60)
     pid = PIDController(kp=1.5, ki=0.1, kd=0.5, setpoint=0.60)
@@ -50,15 +53,38 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
      # metricas
     scaling_events = 0
     sla_violations = 0
-    last_activos = 1 
+    last_activos = info.get('activos', 1)
 
     viz = Visualizer(save_dir="./resultados_graficos/baseline_pid")
 
     for i in range(steps):
-        activos = info.get('activos', 1)
-        workload = info.get('workload', 0.0) * 4000 # Desnormalizamos -> asumiendo 4000 total_users
+        # ── Action from pre-step obs ──────────────────────────────────────
+        activos_pre = info.get('activos', 1)
 
-        # Conteo de eventos de escalado 
+        cpu_for_action = 0.0
+        for j in range(activos_pre):
+            cpu_for_action += obs[j * 6]
+        avg_cpu_action = cpu_for_action / activos_pre if activos_pre > 0 else 0.0
+
+        # PID calcula la señal de control basándose en la CPU actual
+        control_signal = pid.compute(avg_cpu_action)
+
+        scale_decision = 0.5
+        if control_signal > 0.4:
+            scale_decision = 1.0  # Scale Up
+        elif control_signal < -0.4:
+            scale_decision = 0.0  # Scale Down
+
+        weights = [1.0] * env.n_max
+        action = np.array(weights + [scale_decision], dtype=np.float32)
+
+        # ── Step ─────────────────────────────────────────────────────────
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        # ── Log from post-step state ──────────────────────────────────────
+        activos = info.get('activos', 1)
+        workload = info.get('workload', 0.0) * TOTAL_USERS
+
         if i > 0 and activos != last_activos:
             scaling_events += 1
         last_activos = activos
@@ -67,49 +93,30 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
         ram_total = 0.0
         avg_latency = 0.0
         total_errors = 0.0
-        
+
         for j in range(activos):
-            cpu_total += obs[j * 6]
-            ram_total += obs[j * 6 + 1]
-            avg_latency += obs[j * 6 + 3]
-            total_errors += obs[j * 6 + 4]
-            
+            cpu_total   += obs[j * 6]      # CPU
+            ram_total   += obs[j * 6 + 1]  # RAM
+            avg_latency += obs[j * 6 + 3]  # Latency
+            total_errors+= obs[j * 6 + 4]  # Error Rate
+
         avg_cpu = cpu_total / activos if activos > 0 else 0.0
-        
+
         if activos > 0:
-            cpu_total /= activos  # Sacamos el promedio real
-            ram_total /= activos  # Sacamos el promedio real 
+            cpu_total   /= activos
+            ram_total   /= activos
             avg_latency /= activos
-        
-        # Conteo de violaciones SLA (latencia > 0.5 )
+
         if avg_latency > 0.5:
             sla_violations += 1
 
-        # Guardamos
+        hist_reward.append(reward)
         hist_cpu_total.append(avg_cpu)
         hist_ram_total.append(ram_total)
         hist_latency.append(avg_latency)
         hist_errors.append(total_errors)
         hist_activos.append(activos)
         hist_workload.append(workload)
-
-        # --- LOGICA DE CONTROL PID ---
-        # El PID calcula la "señal de control" basandose en la CPU actual
-        control_signal = pid.compute(avg_cpu)
-        
-        scale_decision = 0.5 
-        
-        if control_signal > 0.4:
-            scale_decision = 1.0 # Scale Up
-        elif control_signal < -0.4:
-            scale_decision = 0.0 # Scale Down
-            
-        # Round Robin
-        weights = [1.0] * env.n_max 
-        action = np.array(weights + [scale_decision], dtype=np.float32)
-        
-        obs, reward, terminated, truncated, info = env.step(action)
-        hist_reward.append(reward)
 
         if terminated or truncated:
             break
@@ -134,22 +141,28 @@ def run_pid_baseline(simulated=True, steps=5000, n_max=5, file='testing_metrics.
         'ram_mean': hist_ram_total,
         'latency_mean': hist_latency,
         'error_mean': hist_errors,
-        'workload': [w / 4000 for w in hist_workload],
+        'workload': [w / TOTAL_USERS for w in hist_workload],
         'activos': hist_activos
     }).to_csv(save_path, index=False)
     print(f"Métricas del PID guardadas en: {save_path}")
 
     print("Generando tabla resumen del Baseline PID...")
-
     viz.generate_testing_summary_table(
         cpu_history=hist_cpu_total,
         ram_history=hist_ram_total,
         latency_history=hist_latency,
         errors_history=hist_errors,
-        scaling_events=scaling_events,        
-        sla_violation_pct=sla_violation_pct,  
-        avg_cost_efficiency=avg_cost_efficiency
+        scaling_events=scaling_events,
+        sla_violation_pct=sla_violation_pct,
+        avg_cost_efficiency=avg_cost_efficiency,
+        mode=mode_tag,
     )
+
+    print("Generando curva de recompensa del Baseline PID...")
+    viz.plot_testing_reward_curve(csv_path=save_path, mode=mode_tag)
+
+    print("Generando gráficos de comportamiento de workload del Baseline PID...")
+    viz.plot_testing_behavior(csv_path=save_path, n_max=n_max, mode=mode_tag)
 
 if __name__ == "__main__":
     import argparse

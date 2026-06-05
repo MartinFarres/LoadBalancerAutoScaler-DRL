@@ -10,8 +10,12 @@ import torch
 import os
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.buffers import RolloutBuffer
 import wandb
 from wandb.integration.sb3 import WandbCallback
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.config import SEED
 
 class StepLoggerCallback(BaseCallback):
     """
@@ -58,23 +62,23 @@ def train_phase_1_simulation(nodes=5, iterations=500000, file="training_metrics.
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ID: mpq9xes3)
-    # reward=-443 vs. promedio de -1072 en los otros 29 runs
+    # Hiperparámetros del mejor run del W&B Bayesian Sweep (ver CLAUDE.md "Key Hyperparameters (Best W&B Run)")
     model = PPO("MlpPolicy",
             env_sim,
             verbose=1,
-            n_steps=1024,
+            n_steps=2048,
             batch_size=64,
-            learning_rate=linear_schedule(4.930518166008548e-05),
-            clip_range=0.3,
-            vf_coef=0.5,
-            gamma=0.8827372114196713,
+            learning_rate=linear_schedule(1.94e-03),
+            clip_range=0.1,
+            vf_coef=0.75,
+            gamma=0.91,
             ent_coef=0.0001,
-            gae_lambda=0.9169007884238056,
-            n_epochs=20,
+            gae_lambda=0.947,
+            n_epochs=6,
             normalize_advantage=True,
             tensorboard_log=directory_logs,
-            device='cpu')
+            seed=SEED,
+        device='cpu')
 
     metrics_callback = TrainingMetricsCallback(save_dir=f"./training_results/phase1_{nodes}_nodes", file_name=file)
     
@@ -127,7 +131,17 @@ def train_phase_2_real_world(nodes=5, iterations=5000, file="training_metrics.cs
     model = PPO.load(model_path(nodes), env=env_real, tensorboard_log=directory_logs, device=device)
     
     model.verbose = 1
-    model.learning_rate = linear_schedule(0.0001)
+    model.lr_schedule = get_schedule_fn(linear_schedule(0.0001))
+    model.n_steps = 256 # sobrescribimos n_steps de la fase 1 para generar mas actualizaciones de la policy por falta de recursos y pocas iteraciones
+    model.rollout_buffer = RolloutBuffer(
+        model.n_steps,
+        model.observation_space,
+        model.action_space,
+        device=model.device,
+        gamma=model.gamma,
+        gae_lambda=model.gae_lambda,
+        n_envs=model.n_envs,
+    )
 
     metrics_callback_real = TrainingMetricsCallback(save_dir=f"./training_results/phase2_{nodes}_nodes", file_name=file)
     logger_callback = StepLoggerCallback()
@@ -200,9 +214,9 @@ def run_wandb_sweep(nodes=5, iterations=100000):
         env_sim = Monitor(LoadBalancerEnv(simulated=True, n_max=nodes))
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        model = PPO("MlpPolicy", 
-                    env_sim, 
-                    verbose=0, 
+        model = PPO("MlpPolicy",
+                    env_sim,
+                    verbose=0,
                     learning_rate=linear_schedule(config.learning_rate),
                     gamma=config.gamma,
                     n_steps=config.n_steps,
@@ -215,6 +229,7 @@ def run_wandb_sweep(nodes=5, iterations=100000):
                     # target_kl=config.target_kl,
                     normalize_advantage=config.normalize_advantage,
                     tensorboard_log=f"./logs_tensorboard/sweep_{run.id}",
+                    seed=SEED,
                     device=device)
 
         wandb_callback = WandbCallback(
@@ -238,7 +253,7 @@ if __name__ == "__main__":
     parser.add_argument('comando', type=str)
     parser.add_argument('--nodes', type=int, default=5)
     parser.add_argument('--file', type=str, default='training_metrics.csv')
-    parser.add_argument('--iterations', type=int, default=50000)
+    parser.add_argument('--iterations', type=int, default=5000)
     args = parser.parse_args()
 
     if args.comando == "train_phase_1_simulation":

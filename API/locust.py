@@ -6,6 +6,7 @@ import os
 import requests
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
+from utils.config import TOTAL_USERS
 
 class StressUser(HttpUser):
     # Simula el tiempo que un usuario real se queda leyendo la pantalla antes de hacer otro click
@@ -40,7 +41,7 @@ class StressGenerator(LoadTestShape):
         function_number --> index for function to run
         time_limit --> total length for a unique test in ms
     """
-    total_users = 4000 
+    total_users = TOTAL_USERS
     spawn_rate = 100 # Cuidado, aumentar puede colapsar el cpu
     running_fn = False
     function_tick_start = 0
@@ -48,7 +49,7 @@ class StressGenerator(LoadTestShape):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Inicializamos el generador con los parámetros para el mundo real
-        self.traffic_gen = TrafficGenerator(total_users=4000, min_duration=120, max_duration=900)
+        self.traffic_gen = TrafficGenerator(total_users=TOTAL_USERS, min_duration=120, max_duration=900)
 
     def tick(self):
         run_time = self.get_run_time()
