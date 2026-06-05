@@ -301,7 +301,7 @@ Con $W_{\text{friction}} = 2.0$, esta fricción tiene un peso comparable al de l
 
 El sistema se organiza en cuatro capas que operan de forma coordinada durante el entrenamiento y la evaluación del agente. Cada capa tiene una responsabilidad bien delimitada, y la comunicación entre ellas se realiza a través de interfaces explícitas que permiten reemplazar o extender cualquier componente sin afectar al resto.
 
-![infraestructura&telemetria](./resources/infraestructura.png)
+![infraestructura&telemetria](./resources/infraestructura.jpg)
 
 **Plano de Control — El Agente PPO**
 
@@ -309,31 +309,32 @@ El agente PPO es el componente central del sistema. En cada paso del entorno, re
 
 **Bridge — FastAPI como Middleware**
 
-El Bridge, implementado en `bridge.py` sobre FastAPI, actúa como la capa de traducción entre el lenguaje del agente (vectores de números normalizados) y el lenguaje de la infraestructura (comandos de Docker y HAProxy). Expone cinco endpoints:
+El Bridge, implementado en `bridge.py` sobre FastAPI, actúa como la capa de traducción entre el lenguaje del agente (vectores de números normalizados) y el lenguaje de la infraestructura (comandos de Docker y HAProxy). Expone seis endpoints:
 
-| Endpoint   | Método | Función                                               |
-| ---------- | ------ | ----------------------------------------------------- |
-| `/init`    | POST   | Inicializa el cluster: levanta contenedores y HAProxy |
-| `/action`  | POST   | Recibe pesos y decisión de escala, los aplica         |
-| `/metrics` | GET    | Devuelve métricas de todos los nodos + workload       |
-| `/reset`   | GET    | Restablece el cluster al estado inicial               |
-| `/cleanup` | GET    | Detiene y elimina todos los contenedores              |
+| Endpoint    | Método | Función                                                              |
+| ----------- | ------ | ------------------------------------------------------------------- |
+| `/init`     | POST   | Inicializa el cluster: levanta contenedores y HAProxy               |
+| `/action`   | POST   | Recibe pesos y decisión de escala, los aplica                       |
+| `/metrics`  | GET    | Devuelve métricas de todos los nodos + workload                     |
+| `/workload` | POST   | Locust reporta el número de usuarios activos; se normaliza e incluye en la observación |
+| `/reset`    | GET    | Restablece el cluster al estado inicial                             |
+| `/cleanup`  | POST   | Detiene y elimina todos los contenedores                            |
 
 Esta separación en una API REST independiente tiene una ventaja práctica concreta: el agente puede entrenarse en cualquier máquina de la red apuntando a la URL del Bridge, sin necesidad de tener Docker instalado localmente ni acceso directo a los cgroups del host.
 
 **Cluster de Contenedores — Docker + HAProxy**
 
-El cluster está formado por `n_max` instancias del servidor `dummy_server`, una aplicación Flask servida con Gunicorn que expone tres endpoints diseñados para generar carga controlada: `/` (respuesta trivial), `/cpu` (cálculo intensivo) y `/ram` (acumulación progresiva de memoria). Gunicorn se configura con dos workers por contenedor para aprovechar múltiples cores y producir curvas de saturación de CPU realistas, ya que el servidor de desarrollo de Flask es monohilo y no generaría la variabilidad necesaria para el entrenamiento.
+El cluster está formado por `n_max` instancias del servidor `dummy_server`, una aplicación Flask servida con Gunicorn que expone tres endpoints diseñados para generar carga controlada: `/` (respuesta trivial), `/cpu` (cálculo intensivo) y `/ram` (acumulación progresiva de memoria). Gunicorn se configura con cuatro workers por contenedor para sostener varias peticiones de forma concurrente y producir curvas de saturación de CPU realistas, ya que el servidor de desarrollo de Flask es monohilo y no generaría la variabilidad necesaria para el entrenamiento.
 
-Todos los contenedores se conectan a una red virtual Docker dedicada (`lbas_network`), sobre la que HAProxy opera como punto de entrada único. Su configuración se genera programáticamente al inicio del cluster a través de `init_haproxy_cfg()`, que escribe el archivo `haproxy.cfg` con un servidor por contenedor. Los pesos de ruteo se modifican en caliente durante el entrenamiento mediante la Runtime API de HAProxy, sin necesidad de recargar el proceso.
+Todos los contenedores se conectan a una red virtual Docker dedicada (`lbas_network`), sobre la que HAProxy opera como punto de entrada único. Su configuración se genera al inicio del cluster a través de `init_haproxy_cfg()`, que escribe el archivo `haproxy.cfg` con un servidor por contenedor. Los pesos de ruteo se modifican en caliente durante el entrenamiento mediante la Runtime API de HAProxy, sin necesidad de recargar el proceso.
 
-Cada contenedor se le ha asignado un límite explícito de `500_000_000` nano-CPUs (equivalente a 0.5 cores), lo que garantiza que la competencia por recursos entre nodos sea observable y medible, forzando al agente a aprender cuándo el cluster necesita más capacidad.
+Cada contenedor se le ha asignado un límite explícito de `1_000_000_000` nano-CPUs (equivalente a 1.0 core), lo que garantiza que la competencia por recursos entre nodos sea observable y medible, forzando al agente a aprender cuándo el cluster necesita más capacidad.
 
 **Generador de Tráfico — Locust**
 
-Locust genera el tráfico HTTP que estresa el cluster durante la fase de entrenamiento real. El generador de carga implementa la clase `StressGenerator`, que hereda de `LoadTestShape` y determina dinámicamente el número de usuarios activos en cada tick. Para garantizar que el agente aprenda a reaccionar ante patrones de tráfico variados y no se sobreajuste a un único patrón, el sistema delega la generación de carga al módulo `TrafficGenerator`, compartido entre el entorno simulado y Locust.
+Locust cumple la función de estresar el cluster con tráfico HTTP realista durante la fase de entrenamiento real, ajustando dinámicamente el número de usuarios activos a lo largo del tiempo. Su objetivo es exponer al agente a una carga que cambia constantemente para que no se sobreajuste a un patrón de tráfico concreto, sino que aprenda una política robusta ante condiciones diversas. Para lograrlo, la generación de la señal de carga no se fija en Locust sino que se delega a un componente común, `TrafficGenerator`, compartido entre el entorno simulado y el real; de este modo tanto el preentrenamiento como el fine-tuning enfrentan al agente a la misma variedad de regímenes de tráfico.
 
-`TrafficGenerator` implementa ocho funciones de carga distintas seleccionadas aleatoriamente, cada una con parámetros generados al inicio de cada ciclo: doble ola gaussiana, lineal, exponencial, escalones, tendencia, estacional, diente de sierra y spike con recuperación. Cada ciclo tiene una duración aleatoria de entre 2 y 15 minutos, y sobre cada valor calculado se aplica un jitter gaussiano del 5% y una probabilidad del 2% de generar un evento extremo (corte de tráfico o pico de demanda). Esto asegura que el espacio de estados que observa el agente durante el entrenamiento sea suficientemente rico y no determinista.
+Durante el entrenamiento, `TrafficGenerator` selecciona aleatoriamente entre ocho funciones de carga, cada una con parámetros sorteados al inicio de cada ciclo: doble ola gaussiana, lineal, exponencial, escalones, tendencia, estacional, diente de sierra y spike con recuperación. Para la fase de evaluación se incorporan tres patrones adicionales, concebidos como casos límite de estrés: carga sostenida cerca del máximo, oscilación rápida entre carga mínima y máxima, y una caída abrupta seguida de recuperación progresiva (flash crash). Cada ciclo tiene una duración aleatoria de entre 2 y 15 minutos y sobre cada valor se aplica un jitter gaussiano del 5%. Además, para que la carga evolucione de forma realista y no a saltos, la escala de cada ciclo varía respecto del anterior mediante un recorrido aleatorio (random walk) y las transiciones entre ciclos se suavizan. Esto asegura que el espacio de estados observado por el agente durante el entrenamiento sea rico y no determinista, pero sin discontinuidades imposibles de seguir para un actuador que escala de a un nodo por paso.
 
 El número de usuarios activos en cada momento se reporta al Bridge mediante un POST al endpoint `/workload`, que normaliza el valor y lo incluye en el vector de observación como una señal adicional de contexto. Esto le da al agente información anticipatoria sobre la carga actual antes de que sus efectos sean visibles en las métricas de CPU y latencia.
 
@@ -341,7 +342,7 @@ El número de usuarios activos en cada momento se reporta al Bridge mediante un 
 
 ### 3.5.2 Infraestructura de Telemetría
 
-La recolección de métricas en tiempo real constituye la columna vertebral del sistema, ya que la calidad de la señal de observación determina directamente la capacidad del agente para tomar decisiones correctas. Para satisfacer los requisitos de baja latencia y alta frecuencia de muestreo que impone el ciclo de entrenamiento del PPO, se diseñó una infraestructura de telemetría en tres capas, cada una especializada según el origen y la naturaleza del dato que expone.
+La recolección de métricas en tiempo real constituye los cimientos del sistema, ya que la calidad de la señal de observación determina directamente la capacidad del agente para tomar decisiones correctas. Para satisfacer los requisitos de baja latencia y alta frecuencia de muestreo que impone el ciclo de entrenamiento del PPO, se diseñó una infraestructura de telemetría en dos capas, cada una especializada según el origen y la naturaleza del dato que expone.
 
 **Capa 1 — Métricas de Hardware vía cgroups (CPU y RAM)**
 
@@ -351,28 +352,17 @@ El kernel acumula de forma continua el tiempo de procesador consumido por cada c
 
 $$\text{cpu}_{\text{usg}}^{\text{norm}} = \min\left(1.0,\; \frac{\Delta\text{CPU}_{ns} / \Delta t_{ns}}{\text{cpu}_{\text{limit}}}\right)$$
 
-El sistema mantiene en memoria un diccionario `last_cpu_stats` indexado por el Long ID de cada contenedor, que persiste entre pasos del entorno y permite calcular el delta sin releer el historial completo. El consumo de RAM se lee del archivo `memory.current` y se normaliza contra el límite configurado en MB, resultando en una métrica directamente interpretable como riesgo de OOM.
+El sistema mantiene en memoria un diccionario `last_cpu_stats` indexado por el Long ID de cada contenedor, que persiste entre pasos del entorno y permite calcular el delta sin releer el historial completo. El consumo de RAM se lee del archivo `memory.current` y se normaliza contra el límite de RAM configurado, resultando en una métrica directamente interpretable como riesgo de OOM (Out of Memory).
 
-**Capa 2 — Métricas de Red vía Biblioteca C (`fast_metrics.c`)**
+**Capa 2 — Métricas L7 vía HAProxy Stats Socket**
 
-Leer los contadores de red de un contenedor desde el proceso host presenta un obstáculo fundamental: cada contenedor opera dentro de su propio _network namespace_, donde la interfaz `eth0` no existe en el namespace del host. La solución implementada se basa en la llamada al sistema `setns()`, que permite a un proceso ingresar temporalmente al namespace de red de otro proceso. La biblioteca `libfastmetrics.so`, compilada desde `fast_metrics.c`, implementa esta lógica en C para minimizar la latencia:
-
-1. Se construye la ruta al pseudo-archivo del namespace: `/proc/<PID>/ns/net`
-2. Se abre el descriptor de archivo y se invoca `setns(fd, CLONE_NEWNET)`, haciendo que el hilo actual ingrese al namespace del contenedor
-3. Dentro de ese namespace, se lee `/sys/class/net/eth0/statistics/rx_bytes` directamente desde sysfs
-4. El descriptor se cierra inmediatamente para no impedir la liberación del namespace cuando el contenedor termine
-
-Este diseño sigue la recomendación de la documentación oficial de Docker para la recolección de métricas de alto rendimiento: en lugar de lanzar un nuevo proceso por cada lectura, se reutiliza el PID del contenedor, previamente cacheado al momento de la inicialización del cluster. [7]
-
-**Capa 3 — Métricas L7 vía HAProxy Stats Socket**
-
-Las métricas de capa de aplicación —latencia de respuesta HTTP y tasa de errores 5xx— son reportadas por HAProxy a través de su Runtime API, expuesta como un socket TCP en el puerto `9999`. Al enviar el comando `show stat`, HAProxy devuelve un CSV con el estado detallado de cada servidor backend. De esta respuesta se extraen, para cada nodo, la latencia promedio (`rtime`), el contador de errores HTTP 5xx (`hrsp_5xx`) y el peso de ruteo (`weight`), que determina el `status` binario del contenedor.
+Las métricas de capa de aplicación —latencia de respuesta HTTP, tasa de errores 5xx y profundidad de cola— son reportadas por HAProxy a través de su Runtime API, expuesta como un socket TCP en el puerto `9999`. Al enviar el comando `show stat`, HAProxy devuelve un CSV con el estado detallado de cada servidor backend. De esta respuesta se extraen, para cada nodo, la latencia promedio (`rtime`), el contador de errores HTTP 5xx (`hrsp_5xx`) y el peso de ruteo (`weight`), que determina el `status` binario del contenedor. Además, se obtiene del backend la profundidad de la cola pendiente (`qcur`) —la cola compartida que el algoritmo `leastconn` acumula a nivel de backend—, que se difunde a cada nodo activo como señal anticipada de saturación (backpressure).
 
 El socket se instancia, utiliza y cierra en cada llamada de forma explícita. Mantener una conexión persistente sería problemático: HAProxy puede cerrar silenciosamente conexiones inactivas, lo que provocaría un _broken pipe_ en el siguiente paso del entorno. La lectura de la respuesta se realiza en un bucle hasta que el socket retorna un chunk vacío, garantizando que respuestas largas no se lean de forma truncada y corrompan el CSV.
 
 **Paralelización de la Recolección**
 
-Dado que el sistema gestiona `n_max` contenedores en paralelo, una recolección secuencial implicaría que el tiempo total de un paso del entorno crecería linealmente con el número de nodos. Para evitar este problema, la función `get_metrics()` lanza un `ThreadPoolExecutor` con tantos workers como contenedores activos, ejecutando en paralelo la recolección de cgroups y red para cada nodo. Los resultados se escriben en sus posiciones exactas dentro de la lista de salida a medida que cada hilo completa su trabajo, garantizando el orden correcto sin necesidad de sincronización adicional, mientras la recolección de métricas HAProxy se realiza una única vez antes de lanzar el pool y se pasa como argumento compartido a todos los workers.
+Dado que el sistema gestiona `n_max` contenedores en paralelo, una recolección secuencial implicaría que el tiempo total de un paso del entorno crecería linealmente con el número de nodos. Para evitar este problema, la función `get_metrics()` lanza un `ThreadPoolExecutor` con tantos workers como contenedores activos, ejecutando en paralelo la recolección de métricas de cgroups para cada nodo. Los resultados se escriben en sus posiciones exactas dentro de la lista de salida a medida que cada hilo completa su trabajo, garantizando el orden correcto sin necesidad de sincronización adicional, mientras la recolección de métricas HAProxy se realiza una única vez antes de lanzar el pool y se pasa como argumento compartido a todos los workers.
 
 <br>
 
