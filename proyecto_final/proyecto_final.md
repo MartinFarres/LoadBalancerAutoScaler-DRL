@@ -221,6 +221,20 @@ $$\text{status}_i = \begin{cases} 1 & \text{si el contenedor recibe tráfico} \\
 
 En el entorno real, el valor se determina a partir del peso asignado por _HAProxy_, un contenedor con peso mayor a $0$ es considerado activo, mientras que un peso igual a $0$ lo marca como inactivo. En el entorno simulado, un contenedor es activo o inactivo sin estados intermedios, omitiendo el caso real en que HAProxy puede mantener un contenedor encendido pero sin asignarle tráfico.
 
+**Profundidad de Cola (queue_depth):** Representa el número de peticiones en espera acumuladas en el buffer del balanceador debido a que la tasa de llegada excede temporalmente la capacidad del cluster.
+
+$$\text{queue\_depth}_i = \begin{cases} 
+  \min\left(1.0, \dfrac{Q_{\text{backend}}}{N_{\text{max}} \times \text{MAX\_QUEUE\_DEPTH}}\right) & \text{si el nodo } i \text{ está activo} \\ 
+  0.0 & \text{si el nodo está inactivo} 
+\end{cases}$$
+
+Donde:
+*   $Q_{\text{backend}}$ es la métrica de cola pendiente en tiempo real. En el entorno simulado, se deriva de las colas M/M/1 ($L_q = L - \rho$). En el entorno real con Docker, se extrae mediante la Runtime API de HAProxy 
+*   $\text{MAX\_QUEUE\_DEPTH}$ es el factor de normalización configurado en $3.0$ peticiones.
+*   $N_{\text{max}}$ es la cantidad máxima de nodos.
+
+Al normalizar utilizando la capacidad total fija de la flota ($N_{\text{max}} \times \text{MAX\_QUEUE\_DEPTH}$), se evita el "sesgo de escalado": si la normalización dependiera dinámicamente del número de nodos activos, encender un nodo reduciría artificialmente el valor de la métrica enviando una señal errónea al agente. Esta cola se replica como una señal idéntica en el vector de observación de todos los contenedores activos, actuando como un mecanismo de *backpressure* estable que permite al agente detectar la congestión de forma anticipada antes de que se produzcan timeouts o errores de red.
+
 <br>
 
 ## 3.2 Herramientas Utilizadas
@@ -284,6 +298,40 @@ $$P_{\text{op}} = \begin{cases} W_{\text{op}} \cdot (0.40 - \overline{\text{cpu}
 Cuando la CPU promedio está por debajo del 40%, la penalización escala con la cantidad de nodos activos ($W_{\text{op}} = 2.0$), castigando proporcionalmente más al agente cuanto más contenedores ociosos mantiene encendidos. Cuando supera el 75%, se aplica una penalización preventiva suave ($W_{\text{prev}} = 2.0$) que incentiva al agente a escalar anticipadamente antes de que el sistema colapse, en lugar de reaccionar recién cuando la saturación y los errores ya son visibles.
 
 <br>
+
+### 3.4.4 Penalización de Memoria RAM ($\mathcal{P}_{\text{ram}}$)
+Castiga la saturación de memoria RAM por encima de una frontera crítica del 85% para anticipar fallos del sistema por falta de memoria (Out Of Memory):
+$$\mathcal{P}_{\text{ram}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} g(\text{ram\_pct}_i)$$
+
+$$g(\text{ram\_pct}_i) = \begin{cases} 
+  W_{\text{sat}} \cdot (\text{ram\_pct}_i - 0.85) & \text{si } \text{ram\_pct}_i > 0.85 \\ 
+  0.0 & \text{en otro caso} 
+\end{cases}$$
+
+*Donde $W_{\text{sat}} = 15.0$.*
+
+### 3.4.5 Penalización de Cola / Backpressure ($\mathcal{P}_{\text{queue}}$)
+Introduce la profundidad de cola global del balanceador como penalización directa. Esta métrica actúa como señal de advertencia temprana (backpressure) antes de que la saturación resulte en errores o latencia excesiva:
+$$\mathcal{P}_{\text{queue}} = W_{\text{queue}} \cdot \left( \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} \text{queue\_depth}_i \right)$$
+
+*Donde $W_{\text{queue}} = 15.0$. Dado que la cola es fleet-wide (compartida), el valor de $\text{queue\_depth}_i$ es idéntico para todos los nodos activos en un paso.*
+
+### 3.4.6 Zona Muerta de CPU y Penalizaciones Graduadas ($\mathcal{P}_{\text{cpu}}$)
+Se define una zona de operación eficiente para la CPU entre el 40% y el 85%. Las desviaciones fuera de este rango se penalizan de forma progresiva según el comportamiento de cada nodo:
+$$\mathcal{P}_{\text{cpu}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} h(\text{cpu}_i)$$
+
+$$h(\text{cpu}_i) = \begin{cases} 
+  W_{\text{idle}} \cdot (0.40 - \text{cpu}_i) & \text{si } \text{cpu}_i < 0.40 \\
+  W_{\text{prev}} \cdot (\text{cpu}_i - 0.85) + W_{\text{sat}} \cdot (\text{cpu}_i - 0.92) & \text{si } \text{cpu}_i > 0.92 \\
+  W_{\text{prev}} \cdot (\text{cpu}_i - 0.85) & \text{si } \text{cpu}_i > 0.85 \\
+  0.0 & \text{en otro caso}
+\end{cases}$$
+
+*Donde:*
+*   *Castigo por ocio (Underprovisioning): $W_{\text{idle}} = 4.0$ (penaliza mantener recursos encendidos con uso de CPU inferior al 40%).*
+*   *Castigo preventivo (Overutilization): $W_{\text{prev}} = 5.0$ (empuja al agente a escalar cuando se supera el 85% de CPU antes de que ocurran fallas).*
+*   *Castigo por saturación extrema: $W_{\text{sat}} = 15.0$ (añade una penalización severa a partir del 92% de uso de CPU).*
+
 
 ### 3.4.4 Fricción de escalado ($\delta$)
 
