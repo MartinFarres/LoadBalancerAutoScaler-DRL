@@ -249,19 +249,35 @@ La integridad de las métricas fue asegurada con **Pydantic**, que valida los es
 
 ## 3.3 Proceso de entrenamiento
 
-Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos si no que se opto por el uso de datos generados de manera aleatoria para mejorar los resultados del proceso de aprendizaje.
+Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos, si no que se implementó un pipeline de aprendizaje basado en la interacción con dos entornos distintos, aplicando transferencia de aprendizaje para cerrar la brecha entre los datos teoricos y la infraestructura física de la cual se dispone.
 
 <br>
 
-### 3.3.1 Generación de datos y entornos de entrenamiento
+### 3.3.1 Arquitectura de Entornos y Vectorización
 
-Para el desarrollo del agente, se definieron dos fuentes de datos distintas que permitieron una evolución progresiva del aprendizaje:
+Para garantizar la estabilidad numérica de la red neuronal durante el entrenamiento con métricas de distintas magnitudes, los entornos se encapsularon utilizando *DummyVecEnv* y procesados a través de *VecNormalize*. Esta capa normaliza de manera continuamente las observaciones y las recompensas mediante un promedio móvil, recortando valores atípicos.
 
-- _Entorno Simulado:_ En la fase inicial de entrenamiento, se utilizaron funciones matemáticas con ruido gaussiano para generar señales de carga sintéticas. Este enfoque permitió simular comportamientos estocásticos del sistema, proporcionando al agente un entorno controlado pero variable donde aprender las políticas de escalado sin depender de la infraestructura física acelerando el proceso de preentrenamiento.
+La recolección de experiencias se dividió en dos fases:
 
-- _Entorno Real con Locust:_ Una vez que el agente demostró estabilidad en la simulación, se pasó a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Esto permitió recolectar métricas de rendimiento reales extraídas de la API de Docker, enfrentando al agente a la latencia real de red y a los tiempos de respuesta del motor de contenedores.
+- _Entorno Simulado:_ Se generaron señales de carga sintéticas mediante funciones matemáticas y ruido gaussiano. Este enfoque permitió a nuestro agente simular comportamientos estocásticos del sistema, proporcionando al agente un entorno controlado pero variable donde aprender las políticas de escalado sin depender de la infraestructura física, acelerando el proceso de preentrenamiento.
+
+- _Entorno Real con Locust:_ Una vez que demostró estabilidad en la simulación, el agente fue expuesto a un "cluster funcional". En esta etapa, se utilizó Locust para generar tráfico de usuarios auténtico. Las métricas del estado se extrajeron combinando los cgroups del kernel de Linux (CPU/RAM) y las estadísticas L7 del socket de HAProxy (latencia, errores, profundidad de cola).
 
 <br>
+
+## 3.3.2 Fine Tuning
+
+Al traspasar el modelo del entrenamiento simulado (Fase 1) al real (Fase 2), se requiere conservar el conocimiento previo del agente. Para esto, ademas de los pesos de la red, se importaron las normalizaciones aplicadas a las recompensas y observaciones del entorno. Al mantener este componente en modo activo, se permitió que los promedios móviles de las métricas se adaptaran progresivamente a las variaciones de escala del entorno físico sin corromper la política inicial.
+
+Debido a la variabilidad del entorno fisico, se ajustaron los hiperparámetros de entrenamiento para la Fase 2:
+
+-  Se redujo la tasa de aprendizaje implementando una progresión lineal con un valor máximo de $1.0 \times 10^{-4}$. Evitando que el ruido natural del tráfico real destruya las reglas de escalado que ya aprendidas.
+
+- La cantidad de interacciones requeridas antes de que el agente actualice su política se redujo de $2048$ a $256$ pasos. Dado que ejecutar una acción en el entorno real consume mucho mas tiempo, acortar este ciclo permite al agente evaluar los resultados y corregir decisiones mucho más rápido a partir de trayectorias más cortas.
+
+## 3.3.3 Optimización de Hiperparámetros
+
+Para definir los parámetros iniciales de la red en la Fase 1, se ejecutó una optimización Bayesiana utilizando la plataforma Weights & Biases (W&B). Esta técnica permitió explorar eficientemente el espacio de hiperparámetros maximizando la métrica de recompensa promedio por episodio sin depender de búsquedas exhaustivas por fuerza bruta.
 
 ## 3.4 Diseño de la función de recompensa
 
@@ -360,7 +376,7 @@ El cluster está formado por `n_max` instancias del servidor `dummy_server`, una
 
 Todos los contenedores se conectan a una red virtual Docker dedicada (`lbas_network`), sobre la que HAProxy opera como punto de entrada único. Su configuración se genera al inicio del cluster a través de `init_haproxy_cfg()`, que escribe el archivo `haproxy.cfg` con un servidor por contenedor. Los pesos de ruteo se modifican en caliente durante el entrenamiento mediante la Runtime API de HAProxy, sin necesidad de recargar el proceso.
 
-Cada contenedor se le ha asignado un límite explícito de `1_000_000_000` nano-CPUs (equivalente a 1.0 core), lo que garantiza que la competencia por recursos entre nodos sea observable y medible, forzando al agente a aprender cuándo el cluster necesita más capacidad.
+Cada contenedor se le ha asignado un límite explícito de `500_000_000` nano-CPUs (equivalente a 0.5 core), lo que garantiza que la competencia por recursos entre nodos sea observable y medible, forzando al agente a aprender cuándo el cluster necesita más capacidad.
 
 **Generador de Tráfico — Locust**
 
