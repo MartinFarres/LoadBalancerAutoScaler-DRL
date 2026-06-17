@@ -269,9 +269,9 @@ Para el desarrollo del agente, se definieron dos fuentes de datos distintas que 
 
 La función de recompensa constituye el mecanismo central que guía el aprendizaje del agente, traduciendo el estado del cluster en una señal escalar que penaliza los comportamientos indeseables [1]. Se adoptó una función de penalización pura, sin términos positivos, de modo que el agente aprenda a minimizar el daño en lugar de perseguir una recompensa absoluta. Como caso límite, si el número de contenedores activos es cero, la función retorna inmediatamente $R = -200$, garantizando que el vaciado total del cluster sea siempre la peor decisión posible independientemente de cualquier otra señal.
 
-Para el resto de los casos, la recompensa total se compone de tres grupos de penalizaciones calculados sobre los promedios de los nodos activos:
+Para el resto de los casos, la penalizacion total se compone de la sumatoria de  grupos de penalizaciones calculadas sobre los promedios de los nodos activos:
 
-$$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdot \overline{\text{err}} + W_{\text{cost}} \cdot \frac{N_{\text{active}}}{N_{\text{max}}} + W_{\text{sat}} \cdot \left(\overline{\text{cpu}_{\text{sat}}} + \overline{\text{ram}_{\text{sat}}}\right) + P_{\text{op}} \right] - \delta$$
+$$R = - (\mathcal{P}_{\text{lat}} + \mathcal{P}_{\text{err}} + \mathcal{P}_{\text{cost}} + \mathcal{P}_{\text{ram}} + \mathcal{P}_{\text{queue}} + \mathcal{P}_{\text{cpu}}) - \delta$$
 
 <br>
 
@@ -279,27 +279,19 @@ $$R = -\left[ W_{\text{lat}} \cdot \overline{\text{lat}}^2 + W_{\text{err}} \cdo
 
 Los errores HTTP y la latencia de respuesta son las únicas métricas que el cliente percibe directamente, por lo que reciben las penalizaciones más severas.
 
-Los errores HTTP 5xx reciben el mayor peso ($W_{\text{err}} = 50.0$): una respuesta fallida representa una degradación crítica e irrecuperable del servicio desde la perspectiva del usuario. La latencia se penaliza con $W_{\text{lat}} = 2.0$ aplicado cuadráticamente sobre el promedio normalizado, lo que hace al agente progresivamente más sensible a los picos. Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia promedio no supera el 10% del timeout máximo ($\overline{\text{lat}} \leq 0.1$), la penalización se anula completamente, definiendo implícitamente el nivel de SLA del sistema.
+Los errores HTTP 5xx reciben el mayor peso ($W_{\text{err}} = 50.0$): una respuesta fallida representa una degradación crítica e irrecuperable del servicio desde la perspectiva del usuario. La latencia se penaliza con $W_{\text{lat}} = 10.0$ aplicado cuadráticamente sobre la métrica individual de cada nodo, promediando posteriormente los castigos, lo que hace al agente progresivamente más sensible a los picos locales.
+
+Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia del nodo individual no supera el 10% del timeout máximo (${\text{lat}_i} \leq 0.1$, equivalente a 200ms), la penalización para dicho nodo se anula, definiendo implícitamente el nivel de SLA del sistema.
 
 <br>
 
 ### 3.4.2 Penalizaciones orientadas al operador (_operator-facing_)
 
-El costo operativo penaliza el sobreaprovisionamiento en función de la fracción de nodos activos sobre el total disponible ($W_{\text{cost}} = 1.0$), desincentivando mantener contenedores encendidos sin necesidad. La saturación de recursos penaliza el exceso de uso de CPU por encima del 80% y de RAM por encima del 85%, acumulando únicamente la diferencia que sobrepasa esos umbrales ($W_{\text{sat}} = 1.0$ para ambos). Estos pesos unitarios permiten que ambas señales actúen como guías de fondo sin solaparse con las penalizaciones de calidad de servicio.
+El costo operativo penaliza el sobreaprovisionamiento en función de la fracción de nodos activos sobre el total disponible ($W_{\text{cost}} = 5.0$), desincentivando mantener contenedores encendidos sin necesidad. La saturación de recursos penaliza tanto el exceso de uso de CPU como de RAM por encima del 85%, acumulando únicamente la diferencia que sobrepasa esos umbrales ($W_{\text{sat}} = 15.0$ para ambos). Estos pesos permiten que ambas señales actúen como guías de fondo sin solaparse con las penalizaciones de calidad de servicio.
 
 <br>
 
-### 3.4.3 Zona muerta de CPU y penalización adaptativa ($P_{\text{op}}$)
-
-El término $P_{\text{op}}$ implementa una zona muerta que define el rango operativo eficiente del cluster. Si el uso promedio de CPU de los nodos activos cae entre el 40% y el 75%, no se aplica penalización adicional, ya que el cluster opera con el nivel de ocupación deseado. Fuera de ese rango, la penalización adopta dos formas distintas según la dirección de la desviación:
-
-$$P_{\text{op}} = \begin{cases} W_{\text{op}} \cdot (0.40 - \overline{\text{cpu}}) \cdot \dfrac{N_{\text{active}}}{N_{\text{max}}} & \text{si } \overline{\text{cpu}} < 0.40 \\[8pt] W_{\text{prev}} \cdot (\overline{\text{cpu}} - 0.75) & \text{si } \overline{\text{cpu}} > 0.75 \\[4pt] 0 & \text{en otro caso} \end{cases}$$
-
-Cuando la CPU promedio está por debajo del 40%, la penalización escala con la cantidad de nodos activos ($W_{\text{op}} = 2.0$), castigando proporcionalmente más al agente cuanto más contenedores ociosos mantiene encendidos. Cuando supera el 75%, se aplica una penalización preventiva suave ($W_{\text{prev}} = 2.0$) que incentiva al agente a escalar anticipadamente antes de que el sistema colapse, en lugar de reaccionar recién cuando la saturación y los errores ya son visibles.
-
-<br>
-
-### 3.4.4 Penalización de Memoria RAM ($\mathcal{P}_{\text{ram}}$)
+### 3.4.3 Penalización de Memoria RAM ($\mathcal{P}_{\text{ram}}$)
 Castiga la saturación de memoria RAM por encima de una frontera crítica del 85% para anticipar fallos del sistema por falta de memoria (Out Of Memory):
 $$\mathcal{P}_{\text{ram}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} g(\text{ram\_pct}_i)$$
 
@@ -310,20 +302,20 @@ $$g(\text{ram\_pct}_i) = \begin{cases}
 
 *Donde $W_{\text{sat}} = 15.0$.*
 
-### 3.4.5 Penalización de Cola / Backpressure ($\mathcal{P}_{\text{queue}}$)
+### 3.4.4 Penalización de Cola / Backpressure ($\mathcal{P}_{\text{queue}}$)
 Introduce la profundidad de cola global del balanceador como penalización directa. Esta métrica actúa como señal de advertencia temprana (backpressure) antes de que la saturación resulte en errores o latencia excesiva:
 $$\mathcal{P}_{\text{queue}} = W_{\text{queue}} \cdot \left( \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} \text{queue\_depth}_i \right)$$
 
 *Donde $W_{\text{queue}} = 15.0$. Dado que la cola es fleet-wide (compartida), el valor de $\text{queue\_depth}_i$ es idéntico para todos los nodos activos en un paso.*
 
-### 3.4.6 Zona Muerta de CPU y Penalizaciones Graduadas ($\mathcal{P}_{\text{cpu}}$)
+### 3.4.5 Zona Muerta de CPU y Penalizaciones Graduadas ($\mathcal{P}_{\text{cpu}}$)
 Se define una zona de operación eficiente para la CPU entre el 40% y el 85%. Las desviaciones fuera de este rango se penalizan de forma progresiva según el comportamiento de cada nodo:
 $$\mathcal{P}_{\text{cpu}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} h(\text{cpu}_i)$$
 
 $$h(\text{cpu}_i) = \begin{cases} 
   W_{\text{idle}} \cdot (0.40 - \text{cpu}_i) & \text{si } \text{cpu}_i < 0.40 \\
+  W_{\text{prev}} \cdot (\text{cpu}_i - 0.85) & \text{si } 0.85 <  \text{cpu}_i \leq 0.92 \\
   W_{\text{prev}} \cdot (\text{cpu}_i - 0.85) + W_{\text{sat}} \cdot (\text{cpu}_i - 0.92) & \text{si } \text{cpu}_i > 0.92 \\
-  W_{\text{prev}} \cdot (\text{cpu}_i - 0.85) & \text{si } \text{cpu}_i > 0.85 \\
   0.0 & \text{en otro caso}
 \end{cases}$$
 
@@ -333,15 +325,9 @@ $$h(\text{cpu}_i) = \begin{cases}
 *   *Castigo por saturación extrema: $W_{\text{sat}} = 15.0$ (añade una penalización severa a partir del 92% de uso de CPU).*
 
 
-### 3.4.4 Fricción de escalado ($\delta$)
+### 3.4.6 Fricción de escalado ($\delta$)
 
-El término $\delta$ penaliza cada decisión de escalar en los extremos del espacio de acción:
-
-$$\delta = \begin{cases} W_{\text{friction}} & \text{si } a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7 \\ 0 & \text{en otro caso} \end{cases}$$
-
-Con $W_{\text{friction}} = 2.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada acción de escalar con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de _chattering_ (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
-
-<br>
+El término $\delta$ penaliza las decisiones de escalar únicamente cuando contradicen la tendencia de escalado previa, evaluando los extremos del espacio de acción:$$\delta = \begin{cases} W_{\text{friction}} & \text{si } (a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7) \text{ e invierte la dirección anterior} \\ 0 & \text{en otro caso} \end{cases}$$Con $W_{\text{friction}} = 1.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada cambio de dirección con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de "chattering" (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
 
 ## 3.5 Infraestructura de Telemetría y Monitoreo
 
@@ -493,7 +479,7 @@ La Figura 4.6 detalla las configuraciones específicas responsables de los cinco
 
 <br>
 
-## Evaluación del escalamiento (Runs: 3,5,10,20 nodos)
+## Evaluación del escalamiento (Runs: 5, 10, 15, 20 nodos)
 
 ### Comportamiento del agente ante el aumento de la complejidad del entorno
 
