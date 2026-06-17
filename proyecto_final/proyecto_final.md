@@ -167,18 +167,22 @@ Esta integración permite que el agente PPO aprenda que un aumento en la utiliza
 
 Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
 
-**Uso de la CPU (cpu_usg):** Representa el uso de CPU consumida por cada contenedor respecto al total disponible en el intervalo de muestreo.
+**Uso de la CPU (cpu_usg):**  Representa la carga computacional de cada contenedor, normalizada en el rango $[0,1]$. Su cálculo difiere según el entorno operativo para mantener la equivalencia de la señal:
 
-$$\text{cpu}_{\text{usg}} = \frac{\Delta \text{CPU}_{ns}}{\Delta t_{ns}} + \mathcal{N}(0, \sigma^2)$$
+<u>*En el entorno real (Docker):*</u> Se calcula a partir de los registros cgroups del kernel, midiendo el incremento de tiempo de CPU consumido respecto al tiempo transcurrido, y dividiéndolo por la cantidad de nucleos de cpu asignada al contenedor ($Límite_{CPU}$):
 
-Donde:
+$$\text{cpu\_usg}_{\text{real}} = \min\left(1.0, \frac{\Delta \text{CPU}_{ns} / \Delta t_{ns}}{\text{Límite}_{\text{CPU}}}\right)$$
 
-- $\Delta \text{CPU}_{ns}$ = CPU usado en el intervalo (nanosegundos)
-- $\Delta t_{ns}$ = Tiempo real transcurrido (nanosegundos)
-- $\mathcal{N}(0, \sigma^2)$ = Ruido Gaussiano introducido en el entorno simulado
-  para representar la variabilidad natural del sistema
+  Donde: 
+- $\Delta \text{CPU}_{ns} = \text{CPU usada en el intervalo (nanosegundos)}$
+- $\Delta t_{ns} = \text{Tiempo real transcurrido (nanosegundos)}$
 
-Se encuentra normalizado para el rango $[0, 1]$, lo que permite comparar porcentualmente la carga computacional entre contenedores independientemente de su capacidad.
+<u>*En el entorno simulado:*</u> Se deriva directamente de la utilización teórica del sistema M/M/1 ($\rho = \lambda / \mu$), a la cual se le inyecta ruido gaussiano para emular la variabilidad natural de los procesos y el scheduler del sistema operativo:
+
+$$\text{cpu\_usg}_{\text{sim}} = \min(1.0, \max(0.0, \rho + \mathcal{N}(0, \sigma^2)))$$
+
+Esta normalización en ambos entornos permite al agente comparar métricas porcentuales directamente y transferir su política de escalado de la simulación a la realidad independientemente de la capacidad física del hardware subyacente.
+
 
 **Uso de memoria RAM (ram_usg_pct y ram_total_normalize):** Representa el consumo de memoria de cada contenedor respecto al límite configurado, normalizado en $[0, 1]$.
 
@@ -190,23 +194,17 @@ Donde:
 - $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor
   $(1024 \times 1024 \times 1024 \text{ bytes})$
 
-En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker.
-En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco
-Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima
-el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican
-riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para
-evitar la caída del servicio.
+En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para evitar la caída del servicio.
 
 **Latencia (latency):** Representa el tiempo de respuesta promedio de las
-peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout
-máximo de 2000 ms.
+peticiones HTTP procesadas por cada contenedor, normalizado respecto a un timeout máximo de 1000 ms.
 
 $$\text{latency} = \frac{t_{\text{respuesta}}}{t_{\text{timeout}}}$$
 
 Donde:
 
 - $t_{\text{respuesta}}$ = tiempo de respuesta observado (ms)
-- $t_{\text{timeout}}$ = límite máximo configurado de 2000 ms
+- $t_{\text{timeout}}$ = límite máximo configurado de 1000 ms
 
 En el entorno real, el valor de $t_{\text{respuesta}}$ se extrae directamente de
 las estadísticas de _HAProxy_. En el entorno simulado, se deriva del modelo de
