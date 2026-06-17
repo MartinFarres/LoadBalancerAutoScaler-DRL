@@ -281,7 +281,7 @@ Los errores HTTP y la latencia de respuesta son las únicas métricas que el cli
 
 Los errores HTTP 5xx reciben el mayor peso ($W_{\text{err}} = 50.0$): una respuesta fallida representa una degradación crítica e irrecuperable del servicio desde la perspectiva del usuario. La latencia se penaliza con $W_{\text{lat}} = 10.0$ aplicado cuadráticamente sobre la métrica individual de cada nodo, promediando posteriormente los castigos, lo que hace al agente progresivamente más sensible a los picos locales.
 
-Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia del nodo individual no supera el 10% del timeout máximo (${\text{lat}_i} \leq 0.1$, equivalente a 200ms), la penalización para dicho nodo se anula, definiendo implícitamente el nivel de SLA del sistema.
+Para evitar penalizar la latencia inherente a la red en condiciones de baja carga, se aplica un umbral de tolerancia: si la latencia del nodo individual no supera el 10% del timeout máximo (${\text{lat}_i} \leq 0.1$, equivalente a 100ms), la penalización para dicho nodo se anula, definiendo implícitamente el nivel de SLA del sistema.
 
 <br>
 
