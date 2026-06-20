@@ -171,7 +171,7 @@ Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO
 
 <u>_En el entorno real (Docker):_</u> Se calcula a partir de los registros cgroups del kernel, midiendo el incremento de tiempo de CPU consumido respecto al tiempo transcurrido, y dividiéndolo por la cantidad de nucleos de cpu asignada al contenedor ($Límite_{CPU}$):
 
-$$\text{cpu\_usg}_{\text{real}} = \min\left(1.0, \frac{\Delta \text{CPU}_{ns} / \Delta t_{ns}}{\text{Límite}_{\text{CPU}}}\right)$$
+$$\text{cpu\\_usg}_{\text{real}} = \min\left(1.0, \frac{\Delta \text{CPU}_{ns} / \Delta t_{ns}}{\text{Límite}_{\text{CPU}}}\right)$$
 
 Donde:
 
@@ -180,7 +180,8 @@ Donde:
 
 <u>_En el entorno simulado:_</u> Se deriva directamente de la utilización teórica del sistema M/M/1 ($\rho = \lambda / \mu$), a la cual se le inyecta ruido gaussiano para emular la variabilidad natural de los procesos y el scheduler del sistema operativo:
 
-$$\text{cpu\_usg}_{\text{sim}} = \min(1.0, \max(0.0, \rho + \mathcal{N}(0, \sigma^2)))$$
+$$\text{cpu\\_usg}_{\text{sim}} = \min(1.0, \max(0.0, \rho + \mathcal{N}(0, \sigma^2)))$$
+
 
 Esta normalización en ambos entornos permite al agente comparar métricas porcentuales directamente y transferir su política de escalado de la simulación a la realidad independientemente de la capacidad física del hardware subyacente.
 
@@ -222,8 +223,8 @@ En el entorno real, el valor se determina a partir del peso asignado por _HAProx
 **Profundidad de Cola (queue_depth):** Representa el número de peticiones en espera acumuladas en el buffer del balanceador debido a que la tasa de llegada excede temporalmente la capacidad del cluster.
 
 $$
-\text{queue\_depth}_i = \begin{cases}
-  \min\left(1.0, \dfrac{Q_{\text{backend}}}{N_{\text{max}} \times \text{MAX\_QUEUE\_DEPTH}}\right) & \text{si el nodo } i \text{ está activo} \\
+\text{queue\\_depth}_i = \begin{cases}
+  \min\left(1.0, \dfrac{Q_{\text{backend}}}{N_{\text{max}} \times \text{MAX\\_QUEUE\\_DEPTH}}\right) & \text{si el nodo } i \text{ está activo} \\
   0.0 & \text{si el nodo está inactivo}
 \end{cases}
 $$
@@ -231,10 +232,10 @@ $$
 Donde:
 
 - $Q_{\text{backend}}$ es la métrica de cola pendiente en tiempo real. En el entorno simulado, se deriva de las colas M/M/1 ($L_q = L - \rho$). En el entorno real con Docker, se extrae mediante la Runtime API de HAProxy
-- $\text{MAX\_QUEUE\_DEPTH}$ es el factor de normalización configurado en $3.0$ peticiones.
+- $\text{MAX\\_QUEUE\\_DEPTH}$ es el factor de normalización configurado en $3.0$ peticiones.
 - $N_{\text{max}}$ es la cantidad máxima de nodos.
 
-Al normalizar utilizando la capacidad total fija de la flota ($N_{\text{max}} \times \text{MAX\_QUEUE\_DEPTH}$), se evita el "sesgo de escalado": si la normalización dependiera dinámicamente del número de nodos activos, encender un nodo reduciría artificialmente el valor de la métrica enviando una señal errónea al agente. Esta cola se replica como una señal idéntica en el vector de observación de todos los contenedores activos, actuando como un mecanismo de _backpressure_ estable que permite al agente detectar la congestión de forma anticipada antes de que se produzcan timeouts o errores de red.
+Al normalizar utilizando la capacidad total fija de la flota ($N_{\text{max}} \times \text{MAX\\_QUEUE\\_DEPTH}$), se evita el "sesgo de escalado": si la normalización dependiera dinámicamente del número de nodos activos, encender un nodo reduciría artificialmente el valor de la métrica enviando una señal errónea al agente. Esta cola se replica como una señal idéntica en el vector de observación de todos los contenedores activos, actuando como un mecanismo de _backpressure_ estable que permite al agente detectar la congestión de forma anticipada antes de que se produzcan timeouts o errores de red.
 
 <br>
 
@@ -311,27 +312,30 @@ El costo operativo penaliza el sobreaprovisionamiento en función de la fracció
 ### 3.4.3 Penalización de Memoria RAM ($\mathcal{P}_{\text{ram}}$)
 
 Castiga la saturación de memoria RAM por encima de una frontera crítica del 85% para anticipar fallos del sistema por falta de memoria (Out Of Memory):
-$$\mathcal{P}_{\text{ram}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} g(\text{ram\_pct}_i)$$
+
+$$\mathcal{P}_{\text{ram}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} g(\text{ram\\_pct}_i)$$
 
 $$
-g(\text{ram\_pct}_i) = \begin{cases}
-  W_{\text{sat}} \cdot (\text{ram\_pct}_i - 0.85) & \text{si } \text{ram\_pct}_i > 0.85 \\
+g(\text{ram\\_pct}_i) = \begin{cases}
+  W_{\text{sat}} \cdot (\text{ram\\_pct}_i - 0.85) & \text{si } \text{ram\\_pct}_i > 0.85 \\
   0.0 & \text{en otro caso}
 \end{cases}
 $$
 
-_Donde $W_{\text{sat}} = 15.0$.\_
+- Donde $W_{\text{sat}} = 15.0$.
 
 ### 3.4.4 Penalización de Cola / Backpressure ($\mathcal{P}_{\text{queue}}$)
 
 Introduce la profundidad de cola global del balanceador como penalización directa. Esta métrica actúa como señal de advertencia temprana (backpressure) antes de que la saturación resulte en errores o latencia excesiva:
-$$\mathcal{P}_{\text{queue}} = W_{\text{queue}} \cdot \left( \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} \text{queue\_depth}_i \right)$$
 
-_Donde $W_{\text{queue}} = 15.0$. Dado que la cola es fleet-wide (compartida), el valor de $\text{queue\_depth}_i$ es idéntico para todos los nodos activos en un paso.\_
+$$\mathcal{P}_{\text{queue}} = W_{\text{queue}} \cdot \left( \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} \text{queue\\_depth}_i \right)$$
+
+- Donde $W_{\text{queue}} = 15.0$ . Dado que la cola es fleet-wide (compartida), el valor de $\text{queue\\_depth}_i$ es idéntico para todos los nodos activos en un paso.
 
 ### 3.4.5 Zona Muerta de CPU y Penalizaciones Graduadas ($\mathcal{P}_{\text{cpu}}$)
 
 Se define una zona de operación eficiente para la CPU entre el 40% y el 85%. Las desviaciones fuera de este rango se penalizan de forma progresiva según el comportamiento de cada nodo:
+
 $$\mathcal{P}_{\text{cpu}} = \frac{1}{N_{\text{active}}} \sum_{i \in \text{activos}} h(\text{cpu}_i)$$
 
 $$
@@ -345,13 +349,17 @@ $$
 
 _Donde:_
 
-- _Castigo por ocio (Underprovisioning): $W_{\text{idle}} = 4.0$ (penaliza mantener recursos encendidos con uso de CPU inferior al 40%).\_
-- _Castigo preventivo (Overutilization): $W_{\text{prev}} = 5.0$ (empuja al agente a escalar cuando se supera el 85% de CPU antes de que ocurran fallas).\_
-- _Castigo por saturación extrema: $W_{\text{sat}} = 15.0$ (añade una penalización severa a partir del 92% de uso de CPU).\_
+- Castigo por ocio (Underprovisioning): $W_{\text{idle}} = 4.0$ (penaliza mantener recursos encendidos con uso de CPU inferior al 40%).
+- Castigo preventivo (Overutilization): $W_{\text{prev}} = 5.0$ (empuja al agente a escalar cuando se supera el 85% de CPU antes de que ocurran fallas).
+- Castigo por saturación extrema: $W_{\text{sat}} = 15.0$ (añade una penalización severa a partir del 92% de uso de CPU).
 
 ### 3.4.6 Fricción de escalado ($\delta$)
 
-El término $\delta$ penaliza las decisiones de escalar únicamente cuando contradicen la tendencia de escalado previa, evaluando los extremos del espacio de acción:$$\delta = \begin{cases} W_{\text{friction}} & \text{si } (a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7) \text{ e invierte la dirección anterior} \\ 0 & \text{en otro caso} \end{cases}$$Con $W_{\text{friction}} = 1.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada cambio de dirección con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de "chattering" (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
+El término $\delta$ penaliza las decisiones de escalar únicamente cuando contradicen la tendencia de escalado previa, evaluando los extremos del espacio de acción:
+
+$$\delta = \begin{cases} W_{\text{friction}} & \text{si } (a_{\text{scale}} \leq 0.3 \text{ o } a_{\text{scale}} \geq 0.7) \text{ e invierte la dirección anterior} \\ 0 & \text{en otro caso} \end{cases}$$
+
+Con $W_{\text{friction}} = 1.0$, esta fricción tiene un peso comparable al de la latencia y la zona muerta, lo que obliga al agente a justificar cada cambio de dirección con evidencia suficiente en el estado del cluster. El propósito es suprimir el comportamiento de "chattering" (también llamado efecto serrucho), donde el agente oscila entre levantar y dar de baja contenedores en pasos consecutivos sin que la carga lo justifique. En un entorno real, este comportamiento implicaría un costo operativo elevado y una inestabilidad que el tráfico penalizaría a través de las otras señales con cierto retardo.
 
 ## 3.5 Infraestructura de Telemetría y Monitoreo
 
