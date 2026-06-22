@@ -63,7 +63,7 @@ Para alcanzar este nivel de optimización en entornos de alta dimensionalidad, s
 
 ### 2.3 Proximal Policy Optimization (PPO)
 
-Proximal Policy Optimization (PPO) es un algoritmo de aprendizaje por refuerzo encuadrado en los métodos de policy gradient.
+Proximal Policy Optimization (PPO) es un algoritmo de aprendizaje por refuerzo encuadrado en los métodos de "policy gradient".
 
 A diferencia de los algoritmos basados en valores (como Q-Learning), PPO optimiza directamente la política del agente, mediante una red neuronal que produce una distribución de probabilidades sobre el espacio de acciones para cada estado observado.Este algoritmo pertenece a la familia de los métodos Actor-Critic, donde el aprendizaje se divide en dos estructuras complementarias:
 
@@ -81,13 +81,14 @@ En lugar de maximizar este ratio sin restricciones, PPO aplica un recorte que li
 
 #### 2.3.1 Justificacion
 
-###### Nota: Mejorar la redaccion, haciendo uso de parrafos corto y claros. Minimizar el uso de listas
+Para este proyecto se ha decidido utilizar el algoritmo PPO debido a las siguientes razones:
 
-Para este proyecto se ha decidido utilizar el algoritmo PPO:
+El espacio de acción del sistema es continuo. Los pesos de ruteo y la decisión de escalado son valores reales en $[0, 1]$. DQN fue diseñado para espacios discretos, por lo que aplicarlo directamente requeriría discretizar el espacio, perdiendo precisión en el ruteo.
 
-- **DQN** originalmente trabaja con estados discretos, a diferencia de **PPO** tiene una mejor reaccion ante metricas continuas como uso porcentual
-- La politica de recorte para que los cambios no sean tan abruptos permiten que las acciones del cluster no oscilen levantando y dando de baja muchos contenedores continuamente
-- Mientras que **DQN** se limita a estimar el valor de una accion, **PPO**, utiliza una arquitectura Actor-Critic, lo cual permite que el agente aprenda no solo a maximizar el rendimiento, sino a reducir la varianza, lo que se traduce en un escalado mucho más predecible y menos errático.
+
+A diferencia de DQN, que solo estima el valor de una acción, PPO utiliza una arquitectura Actor-Critic donde el crítico evalúa qué tan bueno es el estado actual. Esto reduce la varianza de las actualizaciones y se traduce en un escalado más predecible.
+
+Por ultimo, el mecanismo de recorte que utiliza PPO evita que la politica del gradiente cambie abruptamente entre iteraciones. Esto impide que el agente oscile levantando y dando de baja un gran numero de contenedores de manera continua sin que la carga lo justifique 
 
 <br>
 
@@ -143,7 +144,7 @@ Para modelar el consumo dinámico en el entorno simulado, se utilizó la **Ley d
 
 $$L = \frac{\rho}{1 - \rho} \quad \text{para} \quad \rho < 1$$
 
-[6]
+[3]
 
 El uso total de la RAM ($RAM_{usg}$) se definió como la suma de la huella de memoria base del contenedor ($RAM_{base}$) más el costo en memoria individual de cada petición ($RAM_{req}$) multiplicado por el número de peticiones concurrentes ($L$), agregando un factor de ruido estocástico para simular el comportamiento del _Garbage Collector_:
 
@@ -165,7 +166,7 @@ Esta integración permite que el agente PPO aprenda que un aumento en la utiliza
 
 ## 3.1 Métricas de Desempeño
 
-Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir tanto la calidad del servicio como la eficiencia de los recursos:
+Para evaluar la efectividad del autoscaler y el comportamiento del algoritmo PPO, se han definido cinco métricas principales que permiten medir la calidad del servicio y la eficiencia de los recursos:
 
 **Uso de la CPU (cpu_usg):** Representa la carga computacional de cada contenedor, normalizada en el rango $[0,1]$. Su cálculo difiere según el entorno operativo para mantener la equivalencia de la señal:
 
@@ -193,7 +194,7 @@ Donde:
 
 - $\text{RAM}_{\text{usada}}$ = memoria consumida por el contenedor (bytes)
 - $\text{RAM}_{\text{límite}}$ = límite configurado para el contenedor
-  $(1024 \times 1024 \times 1024 \text{ bytes})$
+  $(512 \times 1024 \times 1024 \text{ bytes})$
 
 En el entorno real, esta métrica se extrae directamente de los _cgroups_ de Docker. En el entorno simulado, se deriva del modelo de Ley de Little descrito en el Marco Teórico, incorporando una huella base del contenedor y ruido gaussiano que aproxima el comportamiento del recolector de basura de Python. Valores cercanos a $1$ indican riesgo de saturación de memoria (OOM), condición que el agente debe anticipar para evitar la caída del servicio.
 
@@ -253,7 +254,7 @@ La integridad de las métricas fue asegurada con **Pydantic**, que valida los es
 
 ## 3.3 Proceso de entrenamiento
 
-Para el entrenamiento del agente no nos basamos en datos estaticos preestablecidos, si no que se implementó un pipeline de aprendizaje basado en la interacción con dos entornos distintos, aplicando transferencia de aprendizaje para cerrar la brecha entre los datos teoricos y la infraestructura física de la cual se dispone.
+Para el entrenamiento del agente no se utilizaron datos estaticos preestablecidos, si no que se implementó un pipeline de aprendizaje basado en la interacción con dos entornos distintos, aplicando transferencia de aprendizaje para cerrar la brecha entre los datos teoricos y la infraestructura física de la cual se dispone.
 
 <br>
 
@@ -434,7 +435,7 @@ Dado que el sistema gestiona `n_max` contenedores en paralelo, una recolección 
 
 # 4. Análisis y discusión de resultados
 
-En la siguiente sección se presentan los resultados obtenidos. Se realizó un apartado de optimizaición de hiperparámetros, donde se muestran los resultados obtenidos a través de gráficos y tablas. Luego se muestra la evaluación del escalamiento del agente, analizando su comportamiento ante el aumento de la complejidad del entorno y las métricas de desempeño del cluster. Finalmente, se realiza una comparativa contra baselines de la industria, incluyendo umbrales clásicos y un controlador PID, para resumir los resultados obtenidos.
+La sección se organiza en tres apartados. El primero presenta los resultados de la optimización bayesiana de hiperparámetros. El segundo analiza el comportamiento del agente ante distintos tamaños de cluster, y el tercero compara el desempeño del agente PPO contra dos baselines de la industria: un escalador por umbrales estáticos (BAI) y un controlador PID, ambos ejecutados sobre el mismo entorno y el mismo `TrafficGenerator`, garantizando que las diferencias observadas sean atribuibles a la política de control y no al estímulo externo.
 
 <br>
 
@@ -526,15 +527,15 @@ _Figura 4.7: Curvas de aprendizaje superpuestas de Fase 1 para los cinco tamaño
 
 La Figura 4.7 muestra las cinco curvas de aprendizaje superpuestas. El piso del que parte cada corrida es marcadamente distinto y crece de forma monótona con `n_max`: el cluster de 5 nodos arranca en torno a $-3.080$ unidades de recompensa, mientras que el de 25 nodos comienza cerca de $-6.890$. Esta brecha inicial es coherente con la estructura de la función de penalización, dado que tanto el término de costo operativo ($\mathcal{P}_{\text{cost}}$) como el espacio de acción crecen linealmente con el número de nodos: el agente debe explorar simultáneamente un espacio de pesos de ruteo de mayor cardinalidad y enfrentar penalizaciones absolutas más severas durante esa exploración inicial.
 
-A pesar de la diferencia en el punto de partida, las cinco curvas exhiben un patrón de convergencia muy similar. Durante los primeros $1 \times 10^{5}$ pasos, la recompensa mejora de forma abrupta para todos los tamaños, recuperando entre un $80\%$ y un $86\%$ de la distancia hacia el plateau final. A partir de los $2 \times 10^{5}$ pasos las curvas entran en un régimen estacionario y permanecen oscilando en una banda relativamente angosta durante los $8 \times 10^{5}$ pasos restantes. Esta estabilidad es consistente con el efecto de la zona muerta de CPU y de la fricción de escalado descritos en la Sección 3.4: una vez que la política se sitúa dentro del rango de operación eficiente, las penalizaciones acotan los incentivos a explorar acciones más agresivas y la varianza de la recompensa se reduce.
+A pesar de la diferencia en el punto de partida, las cinco curvas exhiben un patrón de convergencia muy similar. Durante los primeros $1 \times 10^{5}$ pasos, la recompensa mejora de forma abrupta para todos los tamaños, recuperando entre un $80\%$ y un $86\%$ de la distancia hacia el plateau final. A partir de los $2 \times 10^{5}$ pasos las curvas entran en un régimen estacionario y permanecen oscilando en una banda relativamente angosta durante los pasos restantes. Esta estabilidad es consistente con el efecto de la zona muerta de CPU y de la fricción de escalado descritos en la Sección 3.4: una vez que la política se sitúa dentro del rango de operación eficiente, las penalizaciones acotan los incentivos a explorar acciones más agresivas y la varianza de la recompensa se reduce.
 
-En el régimen estacionario, la recompensa media final degrada gradualmente con el tamaño del cluster: $-473$ para $N=5$, $-555$ para $N=10$, $-624$ para $N=15$, $-907$ para $N=20$ y $-954$ para $N=25$. Esta degradación no obedece a un fallo del algoritmo sino al crecimiento natural de la penalización promedio: con más nodos disponibles, el agente arrastra una contribución no nula de $\mathcal{P}_{\text{cost}}$ aun manteniendo CPU dentro de la banda eficiente. Las métricas internas confirman este punto: el uso medio de CPU al cierre del entrenamiento se mantiene entre el $40\%$ y el $48\%$ para todas las configuraciones, la latencia normalizada bajo $0.15$ y la tasa de error promedio bajo el $4\%$ incluso para $N=25$. Es decir, el agente sostiene una calidad de servicio comparable a través de todos los tamaños y la pérdida de recompensa es atribuible al costo de mantener una flota más grande, no a una pérdida de control sobre el cluster.
+En el régimen estacionario, la recompensa media final degrada gradualmente con el tamaño del cluster: $-473$ para $N=5$, $-555$ para $N=10$, $-624$ para $N=15$, $-907$ para $N=20$ y $-954$ para $N=25$. Esta degradación se debe al crecimiento natural de la penalización promedio ya que con más nodos disponibles, el agente arrastra una contribución no nula de $\mathcal{P}_{\text{cost}}$ aun manteniendo CPU dentro de la banda eficiente. Las métricas internas confirman este punto: el uso medio de CPU al cierre del entrenamiento se mantiene entre el $40\%$ y el $48\%$ para todas las configuraciones, la latencia normalizada bajo $0.15$ y la tasa de error promedio bajo el $4\%$ incluso para $N=25$. Es decir, el agente sostiene una calidad de servicio comparable a través de todos los tamaños y la pérdida de recompensa es atribuible al costo de mantener una flota más grande, no a una pérdida de control sobre el cluster.
 
 <br>
 
 ### 4.2.2 Fine-tuning en Fase 2 (cluster real)
 
-La Fase 2 reanuda el entrenamiento sobre la infraestructura física descrita en la Sección 3.5, partiendo del checkpoint final de Fase 1 y conservando la normalización de observaciones y recompensas mediante `VecNormalize`. El presupuesto de pasos se redujo dos órdenes de magnitud (de $\sim 1 \times 10^{6}$ a aproximadamente $1.4 \times 10^{4}$) y los hiperparámetros se ajustaron conforme a lo detallado en la Sección 3.3.2: tasa de aprendizaje máxima de $1 \times 10^{-4}$ con decaimiento lineal y horizonte de recolección reducido a $256$ pasos. El objetivo de esta fase no es reaprender la política desde cero sino corregir la brecha sim-to-real residual, principalmente derivada de la latencia real introducida por HAProxy, el comportamiento estocástico del scheduler de Linux y la dinámica del recolector de basura de Python.
+La Fase 2 reanuda el entrenamiento sobre la infraestructura física descrita en la Sección 3.5, partiendo del checkpoint final de Fase 1 y conservando la normalización de observaciones y recompensas mediante `VecNormalize`. El presupuesto de pasos se redujo dos órdenes de magnitud (de $\sim 1 \times 10^{6}$ a aproximadamente $1.4 \times 10^{4}$) y los hiperparámetros se ajustaron conforme a lo detallado en la Sección 3.3.2: tasa de aprendizaje máxima de $1 \times 10^{-4}$ con decaimiento lineal y horizonte de recolección reducido a $256$ pasos. El objetivo de esta fase no es reaprender la política desde cero, sino corregir la brecha sim-to-real residual, principalmente derivada de la latencia real introducida por HAProxy, el comportamiento estocástico del scheduler de Linux y la dinámica del recolector de basura de Python.
 
 ![phase2_5_nodes](../resultados_graficos/phase2_5_nodes/learning_curve.png)
 _Figura 4.8: Curva de aprendizaje del fine-tuning sobre el cluster real para $N=5$ nodos._
@@ -622,7 +623,7 @@ _Tabla 4.3: Métricas de desempeño promedio del agente PPO durante la evaluaci�
 
 Tres lecturas se desprenden de esta tabla. En primer lugar, el uso de CPU se mantiene en todos los casos dentro de la zona muerta definida por la función de recompensa ($0{,}32 \leq \overline{\text{cpu}} \leq 0{,}49$, por debajo del umbral preventivo de $0{,}85$), lo que confirma que el agente prioriza operar en régimen eficiente independientemente del tamaño de la flota. La latencia se mantiene también acotada (siempre por debajo de $0{,}16$, equivalente a $160\,\text{ms}$ contra el _timeout_ máximo de $1.000\,\text{ms}$), muy lejos del régimen de degradación crítica.
 
-En segundo lugar, la tasa de error en simulación crece de manera no monótona con $N$: tras un mínimo en $N=20$ ($3{,}0\%$), el valor se dispara para $N=25$ ($16{,}9\%$). Esto refleja la dificultad creciente del actor para mantener una distribución de pesos calibrada cuando el espacio de acción tiene $26$ componentes; el agente no falla en la decisión de escalado -el número promedio de nodos activos es coherente con el workload- sino en el ruteo fino entre nodos, lo que produce saturaciones puntuales en algunos de ellos. La hipótesis de que se trata de un efecto del ruteo y no del escalado se ve respaldada por el hecho de que la profundidad de cola promedio crece menos que proporcionalmente ($\overline{\text{queue}} = 0{,}16$ en $N=25$ contra $0{,}12$ en $N=5$): no hay un colapso de capacidad agregada, sino un desbalance local.
+En segundo lugar, la tasa de error en simulación crece de manera no monótona con $N$: tras un mínimo en $N=20$ ($3{,}0\%$), el valor se dispara para $N=25$ ($16{,}9\%$). Esto refleja la dificultad creciente del actor para mantener una distribución de pesos calibrada cuando el espacio de acción tiene $26$ componentes; el agente no falla en la decisión de escalado -el número promedio de nodos activos es coherente con el workload- sino en el ruteo fino entre nodos, lo que produce saturaciones puntuales en algunos de ellos. La hipótesis de que se trata de un efecto del ruteo y no del escalado se ve respaldada por el hecho de que la profundidad de cola promedio crece menos que proporcionalmente ($\overline{\text{queue}} = 0{,}16$ en $N=25$ contra $0{,}12$ en $N=5$); no hay un colapso de capacidad agregada, sino un desbalance local.
 
 En tercer lugar, el factor de costo ($\overline{a}/N$) se mantiene en una banda estrecha alrededor de $0{,}60$ en simulación, lo que muestra que el agente aprovecha el cluster con una intensidad comparable a través de los tamaños evaluados. En el entorno real, el costo medio cae a $0{,}43{-}0{,}63$, consecuencia directa de un régimen de workload más bajo: con menos demanda por unidad de tiempo, el agente mantiene menos nodos activos, lo que es exactamente el comportamiento deseado por la función de recompensa. El caso de $N=10$ rompe ligeramente este patrón en simulación ($\overline{a}/N = 0{,}67$), un valor que refleja la combinación de un workload sostenido alto ($\overline{w} = 0{,}45$) y un margen de seguridad conservador aprendido por el agente al inicio del rango de escalado.
 
@@ -632,13 +633,13 @@ En síntesis, la política PPO escala de forma controlada con $N$: mantiene la u
 
 ## 4.4 Comparativa contra baselines de la industria
 
-Para situar al agente PPO frente a estrategias clásicas de autoescalado, se ejecutaron los mismos pipelines de evaluación descritos en la Sección 4.3 utilizando dos controladores baseline. El primero es un escalador por umbrales estáticos (BAI, _Baseline by AI_, denominado así por su rol como referencia metodológica), que añade o elimina nodos cuando la utilización promedio cruza umbrales fijos calibrados a partir de la zona muerta de CPU definida en la función de recompensa. El segundo es un controlador PID convencional que regula el número de nodos activos minimizando el error entre el uso de CPU observado y un valor de consigna, con coeficientes proporcional, integral y derivativo ajustados manualmente. Ambos baselines comparten el mismo entorno y el mismo `TrafficGenerator` que el agente PPO, lo que garantiza que las diferencias observadas son atribuibles a la política de control y no al estímulo externo.
+Para situar al agente PPO frente a estrategias clásicas de autoescalado, se ejecutaron los mismos pipelines de evaluación descritos en la Sección 4.3 utilizando dos controladores baseline. El primero es un escalador por umbrales estáticos (BAI, _Baseline by AI_, denominado así por su rol como referencia metodológica), que añade o elimina nodos cuando la utilización promedio cruza umbrales fijos calibrados a partir de la zona muerta de CPU definida en la función de recompensa. El segundo es un controlador PID convencional que regula el número de nodos activos minimizando el error entre el uso de CPU observado y un valor de consigna, con coeficientes proporcional, integral y derivativo ajustados manualmente. Ambos baselines comparten el mismo entorno y el mismo `TrafficGenerator` que el agente PPO para garantizar que las diferencias observadas son atribuibles a la política de control y no al estímulo externo.
 
 <br>
 
 ### 4.4.1 vs. Umbrales clásicos (Static thresholds / BAI)
 
-El controlador BAI implementa la política más simple imaginable: define dos umbrales de utilización de CPU, uno superior y otro inferior, y agrega o quita un nodo cuando la utilización promedio del cluster cruza alguno de ellos durante una ventana de observación. Su atractivo reside en la simplicidad y en la facilidad de auditoría operativa, propiedades que lo convierten en el baseline industrial de referencia.
+El controlador BAI implementa la política más simple: define dos umbrales de utilización de CPU, uno superior y otro inferior, y agrega o quita un nodo cuando la utilización promedio del cluster cruza alguno de ellos durante una ventana de observación. Su atractivo reside en la simplicidad y en la facilidad de auditoría operativa, propiedades que lo convierten en el baseline industrial de referencia.
 
 En simulación, los resultados son más ajustados de lo que cabría esperar. Promediando sobre los cinco tamaños de cluster, BAI obtiene una recompensa media de $-5{,}68$ contra los $-6{,}10$ del agente PPO, con una tasa de error promedio del $5{,}4\%$ frente al $6{,}6\%$ de PPO y una latencia promedio de $0{,}128$ frente a $0{,}111$. Sin embargo, la lectura agregada oculta un patrón importante de robustez. Mientras que PPO mantiene la tasa de error por debajo del $8\%$ para los tamaños $N \in \{5, 10, 15, 20\}$, BAI presenta una degradación abrupta en $N=20$ con un $10{,}3\%$ de errores y un $9{,}0\%$ en $N=25$, sin un patrón claro de causa: el umbral fijo no se adapta a las diferencias en la distribución del workload entre tamaños, mientras que la política aprendida sí lo hace de manera implícita a través de la red de valor. La salvedad es $N=25$, donde PPO pierde precisión en el ruteo fino y cede la ventaja a BAI ($16{,}9\%$ contra $9{,}0\%$), conforme a lo discutido en la Sección 4.3.
 
@@ -713,9 +714,6 @@ Más allá de estas líneas de extensión, el resultado central del proyecto es 
 
 \[5] Menascé, D. A., & Almeida, V. A. F. (2001). Capacity Planning for Web Services: Metrics, Models, and Methods. Prentice Hall.
 
-\[6] Harchol-Balter, M. (2013). Performance Modeling and Design of Computer Systems: Queueing Theory in Action. Cambridge University Press.
+\[6] https://docs.docker.com/engine/containers/runmetrics/#tips-for-high-performance-metric-collection
 
-\[7] https://docs.docker.com/engine/containers/runmetrics/#tips-for-high-performance-metric-collection
-
-\[8] https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html#hyperparameters
-s
+\[7] https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html#hyperparameters
