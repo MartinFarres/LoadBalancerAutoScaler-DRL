@@ -121,14 +121,13 @@ _Donde:_
 
 - **$S$:** Es el tiempo base de servicio (la latencia natural de procesar una petición cuando el servidor está completamente vacío y no hay cola).
 
-Para emular la variabilidad inherente de la infraestructura de red, se superpuso un término de jitter estocástico al tiempo de respuesta teórico:
+Para emular la variabilidad inherente de la infraestructura de red, se superpusoun término de jitter estocástico al tiempo de respuesta teórico:
 
-$$E[T]obs=S1−ρ+J,J∼N(0, σJ2)E[T]_{obs} = \frac{S}{1 - \rho} + J, \quad J \sim \mathcal{N}(0,\, \sigma_J^2)E[T]obs​=1−ρS​+J,J∼N(0,σJ2​)$$
+$$E[T]_{obs} = \frac{S}{1 - \rho} + J, \quad J \sim \mathcal{N}(0,\, \sigma_J^2)$$
 
 _Donde:_
 
-- **$J$:** modela las fluctuaciones en los tiempos de enrutamiento de paquetes, la variabilidad en las colas de los switches de red y otros factores no deterministas de la infraestructura, con σJ\sigma_J
-σJ​ = 50 milisegundos.
+- **$J$:** Modela las fluctuaciones en los tiempos de enrutamiento de paquetes, la variabilidad en las colas de los switches de red y otros factores no deterministas de la infraestructura, con $\sigma_J$ = 50 milisegundos.
 
 Finalmente, la tasa de errores de red (peticiones rechazadas o HTTP 5xx) se modeló mediante una función de activación Sigmoide desplazada:
 
@@ -169,7 +168,7 @@ _Donde:_
 
 Para valores de ρ ≥ 0.95, la fórmula M/M/1 estándar presenta inestabilidad, tendiendo a infinito cuando ρ → 1. Con el fin de preservar la estabilidad del entorno de simulación sin eliminar la señal de penalización para el agente, se adoptó una función por partes para garantizar la continuidad en el punto de transición:
 
-$$L={ρ1−ρsi ρ<0.950.950.05+(ρ−0.95)⋅200si ρ≥0.95L = \begin{cases} \dfrac{\rho}{1 - \rho} & \text{si } \rho < 0.95 \\[10pt] \dfrac{0.95}{0.05} + (\rho - 0.95) \cdot 200 & \text{si } \rho \geq 0.95 \end{cases}L=⎩⎨⎧​1−ρρ​0.050.95​+(ρ−0.95)⋅200​si ρ<0.95si ρ≥0.95$$
+$$L = \begin{cases} \dfrac{\rho}{1 - \rho} & \text{si } \rho < 0.95 \\[10pt] \dfrac{0.95}{0.05} + (\rho - 0.95) \cdot 200 & \text{si } \rho \geq 0.95 \end{cases}$$
 ​
 La continuidad en ρ = 0.95 queda garantizada dado que ambas ramas producen L = 19. La pendiente de 200 asegura que el consumo de RAM continúa creciendo agresivamente en la zona de saturación, preservando el incentivo correcto para que el agente aprenda a evitar la sobrecarga, sin que los valores numéricos diverjan dentro del entorno de entrenamiento. Se prioriza la estabilidad del simulador sobre la exactitud en una región de operación que el agente debería aprender a evitar por completo y no debería visitar de forma frecuente.
 
