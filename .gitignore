@@ -100,5 +100,5 @@ models/
 
 ppo_lb_*.zip
 
-/resultados_graficos
+
 /training_results
