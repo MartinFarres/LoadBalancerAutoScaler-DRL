@@ -98,7 +98,7 @@ Por ultimo, el mecanismo de recorte que utiliza PPO evita que la politica del gr
 
 Para garantizar que el preentrenamiento del agente en la Fase 1 fuese representativo de un clúster real, las dinámicas de estrés del contenedor se modelaron basándose en la Teoría de Colas, adoptando el modelo M/M/1 (llegadas Markovianas, tiempo de servicio Markoviano, 1 servidor) .
 
-La tasa de llegada de peticiones λ al nodo i se determinó multiplicando la carga total de usuarios por el peso de ruteo asignado por el orquestador. Definiendo la capacidad máxima de procesamiento del nodo como μ, se obtuvo el factor de utilización del sistema ρ:
+La tasa de llegada de peticiones λ al nodo i se determinó multiplicando la carga total de usuarios por el peso de ruteo asignado por el orquestador. Definiendo la capacidad máxima de procesamiento del nodo como μ (fijado en μ = 15), se obtuvo el factor de utilización del sistema ρ:
 
 $$\rho = \frac{\lambda}{\mu}$$
 
@@ -121,6 +121,15 @@ _Donde:_
 
 - **$S$:** Es el tiempo base de servicio (la latencia natural de procesar una petición cuando el servidor está completamente vacío y no hay cola).
 
+Para emular la variabilidad inherente de la infraestructura de red, se superpuso un término de jitter estocástico al tiempo de respuesta teórico:
+
+$$E[T]obs=S1−ρ+J,J∼N(0, σJ2)E[T]_{obs} = \frac{S}{1 - \rho} + J, \quad J \sim \mathcal{N}(0,\, \sigma_J^2)E[T]obs​=1−ρS​+J,J∼N(0,σJ2​)$$
+
+_Donde:_
+
+- **$J$:** modela las fluctuaciones en los tiempos de enrutamiento de paquetes, la variabilidad en las colas de los switches de red y otros factores no deterministas de la infraestructura, con σJ\sigma_J
+σJ​ = 50 milisegundos.
+
 Finalmente, la tasa de errores de red (peticiones rechazadas o HTTP 5xx) se modeló mediante una función de activación Sigmoide desplazada:
 
 $$E_{rate} = \frac{1}{1 + e^{-k(\rho - \rho_0)}}$$
@@ -129,7 +138,7 @@ $$E_{rate} = \frac{1}{1 + e^{-k(\rho - \rho_0)}}$$
 
 _Donde:_
 
-- **$k$:** Es la pendiente de la curva (determina qué tan abrupto es el colapso del contenedor).
+- **$k$:** Es la pendiente de la curva (determina qué tan abrupto es el colapso del contenedor). Se tomo k = 15 para simular el comportamiento real de un servidor que colapsa de forma abrupta al desbordarse su búfer de conexiones.
 - **$\rho_0$:** Es el punto de inflexión (el nivel de sobrecarga, por ejemplo 1.05 o 105%, donde la mitad de las peticiones empiezan a fallar irremediablemente).
 
 Esto simuló el desbordamiento del búfer (Queue overflow), manteniendo una tasa de error de 0 mientras ρ<1.0, pero elevándose rápidamente al 100% cuando la tasa de llegada sobrepasó permanentemente la capacidad de servicio del contenedor [3].
@@ -157,6 +166,12 @@ _Donde:_
 - **$L$:** Es el número de peticiones concurrentes dentro del contenedor (procesándose + en cola).
 - **$RAM_{base}$:** Representa la memoria ocupada por el sistema operativo y el entorno de ejecución (Python/Flask) sin tráfico.
 - **$RAM_{req}$:** Es el consumo de memoria adicional por cada petición activa en el sistema.
+
+Para valores de ρ ≥ 0.95, la fórmula M/M/1 estándar presenta inestabilidad, tendiendo a infinito cuando ρ → 1. Con el fin de preservar la estabilidad del entorno de simulación sin eliminar la señal de penalización para el agente, se adoptó una función por partes para garantizar la continuidad en el punto de transición:
+
+$$L={ρ1−ρsi ρ<0.950.950.05+(ρ−0.95)⋅200si ρ≥0.95L = \begin{cases} \dfrac{\rho}{1 - \rho} & \text{si } \rho < 0.95 \\[10pt] \dfrac{0.95}{0.05} + (\rho - 0.95) \cdot 200 & \text{si } \rho \geq 0.95 \end{cases}L=⎩⎨⎧​1−ρρ​0.050.95​+(ρ−0.95)⋅200​si ρ<0.95si ρ≥0.95$$
+​
+La continuidad en ρ = 0.95 queda garantizada dado que ambas ramas producen L = 19. La pendiente de 200 asegura que el consumo de RAM continúa creciendo agresivamente en la zona de saturación, preservando el incentivo correcto para que el agente aprenda a evitar la sobrecarga, sin que los valores numéricos diverjan dentro del entorno de entrenamiento. Se prioriza la estabilidad del simulador sobre la exactitud en una región de operación que el agente debería aprender a evitar por completo y no debería visitar de forma frecuente.
 
 Esta integración permite que el agente PPO aprenda que un aumento en la utilización ($\rho$) no solo afecta la latencia, sino que dispara exponencialmente el consumo de RAM, permitiéndole anticipar riesgos de saturación o fallos por falta de memoria (_Out of Memory_). En la fase de entrenamiento real, estas métricas se extraen directamente de los _cgroups_ de Docker para validar la precisión del modelo simulado.
 
