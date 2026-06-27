@@ -571,7 +571,7 @@ Para tamaños de cluster mayores, el patrón cualitativo es el mismo. El cuadro 
 
 _Tabla 4.2: Estado inicial y final del fine-tuning de Fase 2 para cada tamaño de cluster._
 
-Dos observaciones merecen destacarse. En primer lugar, la tasa de errores promedio sobre el entorno real es nula al cierre del fine-tuning para los cinco tamaños, mientras que el uso de CPU permanece dentro de la zona eficiente definida por la función de recompensa ($0.40 \leq \overline{\text{cpu}} \leq 0.53$). Esto evidencia que el agente no recurre a sobreaprovisionar para evitar las penalizaciones por error sino que aprende a regular la utilización dentro de la banda objetivo. En segundo lugar, los casos de $N=15$ y $N=20$ muestran que la recompensa final puede ubicarse por debajo del valor inicial, situación que no implica una pérdida de competencia del agente: las primeras ventanas de evaluación coinciden con tramos de baja carga del generador de tráfico (`workload_mean` inicial entre $0.33$ y $0.45$), mientras que las últimas atraviesan picos sostenidos que activan las penalizaciones por costo y latencia. Esta variabilidad temporal es la misma que motiva la utilización de `VecNormalize` en modo activo, y se discute en mayor detalle en la Sección 4.2.3.
+Dos observaciones merecen destacarse. En primer lugar, la tasa de errores promedio sobre el entorno real es nula al cierre del fine-tuning para los cinco tamaños, mientras que el uso de CPU permanece dentro de la zona eficiente definida por la función de recompensa ($0.40 \leq \overline{\text{cpu}} \leq 0.53$). Esto evidencia que el agente no recurre a sobreaprovisionar para evitar las penalizaciones por error, sino que aprende a regular la utilización dentro de la banda objetivo. En segundo lugar, los casos de $N=15$ y $N=20$ muestran que la recompensa final puede ubicarse por debajo del valor inicial, situación que no implica una pérdida de competencia del agente: las primeras ventanas de evaluación coinciden con tramos de baja carga del generador de tráfico (`workload_mean` inicial entre $0.33$ y $0.45$), mientras que las últimas atraviesan picos sostenidos que activan las penalizaciones por costo y latencia. Esta variabilidad temporal es la misma que motiva la utilización de `VecNormalize` en modo activo, y se discute en mayor detalle en la Sección 4.2.3.
 
 <br>
 
@@ -642,35 +642,121 @@ Tres lecturas importantes se desprenden de esta tabla. En primer lugar, el uso d
 
 En segundo lugar, la tasa de error en simulación no crece de manera monotona con $N$; tras un mínimo en $N=20$ ($3{,}0\%$), el valor se dispara para $N=25$ ($16{,}9\%$). Esto refleja la dificultad que tiene el actor para mantener una distribución de pesos equilibrada cuando el espacio de acción tiene $26$ componentes; el agente no falla en la decisión de escalado ya que el número promedio de nodos activos es coherente con el workload, sino en el ruteo fino entre los nodos, lo que produce saturaciones puntuales en algunos de ellos. La hipótesis de que se trata de un efecto del ruteo y no del escalado se ve respaldada por el hecho de que la profundidad de cola promedio no crece proporcionalmente ($\overline{\text{queue}} = 0{,}16$ en $N=25$ contra $0{,}12$ en $N=5$).
 
-En tercer lugar, el factor de costo ($\overline{a}/N$) se mantiene en una banda estrecha alrededor de $0{,}60$ en simulación, lo que muestra que el agente aprovecha el cluster con una intensidad comparable a través de los tamaños evaluados. En el entorno real, el costo medio cae a $0{,}43{-}0{,}63$, consecuencia directa de un régimen de workload más bajo: con menos demanda por unidad de tiempo, el agente mantiene menos nodos activos, lo que es exactamente el comportamiento deseado por la función de recompensa. El caso de $N=10$ rompe ligeramente este patrón en simulación ($\overline{a}/N = 0{,}67$), un valor que refleja la combinación de un workload sostenido alto ($\overline{w} = 0{,}45$) y un margen de seguridad conservador aprendido por el agente al inicio del rango de escalado.
+Y finalmente, el factor de costo ($\overline{a}/N$) se mantiene en una banda estrecha alrededor de $0{,}60$ en simulación, lo que muestra que el agente aprovecha el cluster con una intensidad comparable a través de los tamaños evaluados. En el entorno real, el costo medio cae a $0{,}43{-}0{,}63$, consecuencia directa de un régimen de workload más bajo: con menos demanda por unidad de tiempo, el agente mantiene menos nodos activos, lo que es exactamente el comportamiento deseado por la función de recompensa. El caso de $N=10$ rompe ligeramente este patrón en simulación ($\overline{a}/N = 0{,}67$), un valor que refleja la combinación de un workload sostenido alto ($\overline{w} = 0{,}45$) y un margen de seguridad conservador aprendido por el agente al inicio del rango de escalado.
 
-En síntesis, la política PPO escala de forma controlada con $N$; mantiene la utilización dentro de la banda eficiente, no degrada el costo relativo y solo exhibe pérdida de precisión en el ruteo fino para el cluster de mayor tamaño. Este comportamiento provee la base de comparación necesaria para confrontar al agente con los baselines clásicos, tarea que se aborda en la Sección 4.4.
+En síntesis, la política PPO escala de forma controlada con el tamaño del cluster; mantiene la utilización dentro del intervalo de funcionamiento eficiente definido, no degrada el costo relativo y solo exhibe pérdida de precisión en el ruteo fino para el cluster de mayor tamaño.
 
 <br>
 
 ## 4.4 Comparativa contra baselines de la industria
 
-Para situar al agente PPO frente a estrategias clásicas de autoescalado, se ejecutaron los mismos pipelines de evaluación descritos en la Sección 4.3 utilizando dos controladores baseline. El primero es un escalador por umbrales estáticos (BAI, _Baseline by AI_, denominado así por su rol como referencia metodológica), que añade o elimina nodos cuando la utilización promedio cruza umbrales fijos calibrados a partir de la zona muerta de CPU definida en la función de recompensa. El segundo es un controlador PID convencional que regula el número de nodos activos minimizando el error entre el uso de CPU observado y un valor de consigna, con coeficientes proporcional, integral y derivativo ajustados manualmente. Ambos baselines comparten el mismo entorno y el mismo `TrafficGenerator` que el agente PPO para garantizar que las diferencias observadas son atribuibles a la política de control y no al estímulo externo.
+Con el proposito de evaluar el desempeño relativo del agente PPO frente a estrategias clásicas de autoescalado, se ejecutaron los mismos pipelines de evaluación descritos en la Sección 4.3 utilizando dos controladores como referencia. El primero es un escalador por umbrales estáticos (BAI, _Baseline by AI_, denominado así por su rol como referencia metodológica), que añade o elimina nodos cuando la utilización promedio cruza umbrales fijos calibrados a partir de la zona muerta de CPU definida en la función de recompensa. El segundo es un controlador PID convencional que regula el número de contenedores activos buscando minimizar el error cuadrático entre la utilización observada del procesador y un valor de consigna.
+
+Ambos controladores comparten el mismo entorno y el mismo `TrafficGenerator` que el agente PPO para garantizar que las diferencias observadas son atribuibles a la política de control y no al estímulo externo.
+
+Cabe señalar que la evaluación en entorno real se ejecutó durante un horizonte de $2.000$ pasos, frente a los $250.000$ de la simulación. Esta asimetría implica que las métricas absolutas de ambos entornos no son directamente comparables y deben interpretarse en términos relativos.
+
+#### Resumen de Métricas PPO
+
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 2.438 | 47,96% | 17,04% | 45.468 | 0,78% | 9,7 usr/nodo |
+| **10** | 11.386 | 45,59% | 17,49% | 98.972 | 1,83% | 9,4 usr/nodo |
+| **15** | 18.712 | 44,04% | 17,49% | 114.022 | 1,80% | 9,0 usr/nodo |
+| **20** | 7.618 | 36,32% | 16,33% | 178.009 | 0,41% | 7,3 usr/nodo |
+| **25** | 42.172 | 43,65% | 17,81% | 157.495 | 2,39% | 8,8 usr/nodo |
+
+_Tabla 4.4: Métricas de estado del cluster del agente PPO durante la evaluación del entorno simulado_
+
+<br>
+
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 0 | 47,51% | 47,54% | 842 | 0,00% | 10,5 usr/nodo |
+| **10** | 0 | 48,75% | 48,37% | 1.370 | 0,00% | 10,9 usr/nodo |
+| **15** | 0 | 32,43% | 47,86% | 1.064 | 0,00% | 6,8 usr/nodo |
+| **20** | 0 | 39,48% | 45,68% | 1.516 | 0,00% | 6,7 usr/nodo |
+| **25** | 0 | 44,00% | 47,81% | 1.333 | 0,00% | 8,0 usr/nodo |
+
+_Tabla 4.5: Métricas de estado del cluster del agente PPO durante la evaluación del entorno real_
 
 <br>
 
 ### 4.4.1 vs. Umbrales clásicos (Static thresholds / BAI)
 
-El controlador BAI implementa la política más simple: define dos umbrales de utilización de CPU, uno superior y otro inferior, y agrega o quita un nodo cuando la utilización promedio del cluster cruza alguno de ellos durante una ventana de observación. Su atractivo reside en la simplicidad y en la facilidad de auditoría operativa, propiedades que lo convierten en el baseline industrial de referencia.
+#### Resumen de Métricas BAI
 
-En simulación, los resultados son más ajustados de lo que cabría esperar. Promediando sobre los cinco tamaños de cluster, BAI obtiene una recompensa media de $-5{,}68$ contra los $-6{,}10$ del agente PPO, con una tasa de error promedio del $5{,}4\%$ frente al $6{,}6\%$ de PPO y una latencia promedio de $0{,}128$ frente a $0{,}111$. Sin embargo, la lectura agregada oculta un patrón importante de robustez. Mientras que PPO mantiene la tasa de error por debajo del $8\%$ para los tamaños $N \in \{5, 10, 15, 20\}$, BAI presenta una degradación abrupta en $N=20$ con un $10{,}3\%$ de errores y un $9{,}0\%$ en $N=25$, sin un patrón claro de causa: el umbral fijo no se adapta a las diferencias en la distribución del workload entre tamaños, mientras que la política aprendida sí lo hace de manera implícita a través de la red de valor. La salvedad es $N=25$, donde PPO pierde precisión en el ruteo fino y cede la ventaja a BAI ($16{,}9\%$ contra $9{,}0\%$), conforme a lo discutido en la Sección 4.3.
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 1.578 | 49,86% | 17,07% | 8.809 | 0,64% | 10,0 usr/nodo |
+| **10** | 8.570 | 51,42% | 17,84% | 17.852 | 1,53% | 10,5 usr/nodo |
+| **15** | 9.336 | 50,88% | 17,61% | 16.588 | 1,25% | 10,3 usr/nodo |
+| **20** | 25.672 | 51,16% | 18,35% | 24.672 | 2,25% | 10,6 usr/nodo |
+| **25** | 22.550 | 51,50% | 17,98% | 23.828 | 1,74% | 10,5 usr/nodo |
 
-En el cluster real, el ranking se invierte. BAI obtiene una recompensa promedio de $-3{,}04$ contra los $-3{,}98$ de PPO, principalmente porque su política de umbrales lo mantiene operando con un costo medio de $0{,}47$, frente al $0{,}53$ de PPO. La explicación tiene dos componentes. Por un lado, el régimen de workload alcanzado durante los $2.000$ pasos de evaluación nunca empuja al cluster cerca de la saturación, lo que neutraliza la principal ventaja de un controlador anticipatorio. Por otro, el agente PPO arrastra del entrenamiento un margen de sobreaprovisionamiento aprendido sobre el modelo M/M/1, donde la dinámica de saturación es más severa, y traslada ese margen al entorno real aunque la presión efectiva sea menor.
+_Tabla 4.6: Métricas de estado del cluster del agente BAI durante la evaluación del entorno simulado_
+
+<br>
+
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 0 | 45,95% | 47,99% | 482 | 0,00% | 9,7 usr/nodo |
+| **10** | 0 | 50,05% | 48,11% | 395 | 0,00% | 8,9 usr/nodo |
+| **15** | 0 | 56,39% | 47,66% | 458 | 0,00% | 8,9 usr/nodo |
+| **20** | 0 | 47,72% | 47,96% | 180 | 0,00% | 10,0 usr/nodo |
+| **25** | 0 | 52,07% | 48,42% | 436 | 0,00% | 10,7 usr/nodo |
+
+_Tabla 4.7: Métricas de estado del cluster del agente BAI durante la evaluación del entorno real_
+
+El controlador BAI implementa la política más simple: define dos umbrales de utilización de CPU, uno superior y otro inferior, y agrega o quita un nodo cuando la utilización promedio del cluster cruza alguno de ellos durante una ventana de observación. Su atractivo reside en la simplicidad y en la facilidad de auditoría e implementacion.
+
+En base al analisis de los experimentos realizados dentro del entorno simulado, se puede determinar que bajo la carga estocastica del modelado M/M/1, el controlador BAI supera al agente PPO en varias dimensiones operativas. Esto expone cómo la naturaleza del ruido de gaussiano afecto directamente a la política aprendida por el agente en comparacion a un algoritmo estático.
+
+En terminos de calidad de servicio, el controlador BAI domina la comparativa hasta configuraciones de 15 nodos logrando una menor cantidad de peticiones fallidas, tendencia que se invierte en el caso de 20 nodos donde la rigidez de este genera un aumento significativo, en el cual, la politica anticipatoria del agente le permite limitar las peticiones fallidas. Sin embargo este comportamiento no se mantiene constante y al aumentar a 25 nodos, debido a la complejidad para manejar el espacio, la politica de ruteo del agente colapsa en un pico de 42.172 errores frente a los 22.550 del BAI. estas metricas derivan en un comportamiento de chattering descontrolado del agente evidenciando un problema en el ruteo del trafico del agente.
+
+Finalmente, el controlador estático resulta superior en eficiencia de recursos. Al no intentar micro-gestionar fluctuaciones, BAI sostiene la CPU en la zona óptima ($\sim 50\%$) con una rentabilidad de $10{,}4 \text{ usr/nodo}$. PPO, condicionado por las altas penalizaciones de error simuladas, adopta una postura conservadora de sobreaprovisionamiento preventivo, reduciendo su régimen medio de CPU ($36{,}3\% - 47{,}9\%$) y limitando su eficiencia a un máximo de $9{,}7 \text{ usr/nodo}$.
+
+
+En el entorno real, el agente PPO mantiene su comportamiento altamente reactivo; Para $N=20$ ejecuta $1.516$ eventos de escalado, oscilando en el $75\%$ de los pasos, una tasa prácticamente idéntica a la observada en simulación ($71\%$). A diferencia del entorno simulado, la inercia física del cluster amortigua esta volatilidad sin colapso del servicio. En contraste, BAI reafirma su estabilidad estructural oscilando en apenas el $9\%$ de los pasos ($180$ eventos en $N=20$), lo que le permite sostener una rentabilidad operativa superior al no cargar con márgenes de sobreaprovisionamiento preventivo.
 
 <br>
 
 ### 4.4.2 vs. Controlador PID
 
+#### Resumen de Métricas PID
+
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 7.812 | 60,00% | 20,38% | 42.079 | 6,35% | 12,2 usr/nodo |
+| **10** | 11.360 | 60,00% | 19,67% | 25.300 | 3,98% | 12,6 usr/nodo |
+| **15** | 40.580 | 60,00% | 21,23% | 39.659 | 6,21% | 13,4 usr/nodo |
+| **20** | 38.068 | 60,00% | 20,44% | 34.346 | 4,91% | 12,9 usr/nodo |
+| **25** | 68.757 | 60,00% | 21,27% | 41.136 | 6,14% | 13,8 usr/nodo |
+
+_Tabla 4.8: Métricas de estado del cluster del agente PID durante la evaluación del entorno simulado_
+
+<br>
+
+
+| Tamaño ($N$) | Failed Requests (Total) | Average CPU Usage | Average Memory Usage | Scaling Events (Chattering) | SLA Violations (>1000ms) | Cost Efficiency |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **5** | 0 | 59,97% | 49,53% | 591 | 0,00% | 13,7 usr/nodo |
+| **10** | 0 | 60,14% | 48,03% | 555 | 0,05% | 11,7 usr/nodo |
+| **15** | 0 | 60,00% | 48,37% | 598 | 0,00% | 13,7 usr/nodo |
+| **20** | 0 | 59,99% | 48,04% | 476 | 0,00% | 12,3 usr/nodo |
+| **25** | 0 | 59,85% | 47,96% | 641 | 0,00% | 11,1 usr/nodo |
+
+_Tabla 4.9: Métricas de estado del cluster del agente PID durante la evaluación del entorno real_
+
+<br>
+
 El controlador PID en lugar de reaccionar a umbrales binarios, integra el error de utilización a lo largo del tiempo y modula la respuesta con un término derivativo que anticipa cambios bruscos. Los coeficientes utilizados en la evaluación se calibraron sobre el modelo simulado, manteniendo un valor de consigna del $60\%$ de uso de CPU.
 
-A diferencia de BAI, PID resulta consistentemente el peor de los tres agentes en simulación. La recompensa promedio sobre los cinco tamaños es de $-7{,}85$, comparada con $-5{,}68$ de BAI y $-6{,}10$ de PPO. La tasa de error media alcanza el $13{,}3\%$ y se dispara hasta el $27{,}5\%$ para $N=25$, valor que duplica al de los otros dos agentes. La causa raíz es estructural: el término derivativo introduce sobre-correcciones cuando el workload cambia rápidamente, lo que se traduce en escaladas y desescaladas innecesarias que no logran estabilizar la utilización en torno al setpoint. El término integral, por su parte, acumula sesgo cuando el cluster opera durante períodos prolongados por debajo del valor de consigna y produce escaladas tardías cuando la carga retorna, justo lo opuesto al margen anticipatorio que aprende PPO.
+A diferencia del controlador estático (BAI), PID resulta inferior a PPO en calidad de servicio durante la simulación, degradándose de forma severa al escalar la infraestructura. Si bien en clusters pequeños (N=10) mantienen una paridad relativa en cuanto a la cantidad de peticiones fallidas, la diferencia aumenta dasticamente en configuraciones mayores. Para N=20, PID permite 38.068 errores contra apenas 7.618 de PPO, y en N=25 colapsa con 68.757 peticiones fallidas frente a las 42.172 de la red neuronal. La causa raíz se encuentra en la gestión de recursos, el controlador logra fijar el uso medio de CPU exactamente en su valor de consigna (60,00%) en todos los escenarios, maximizando la rentabilidad del cluster. Sin embargo, al forzar este alto nivel de utilización constante, PID opera con un margen de nulo de flexibilidad frente al ruido estocástico del entorno simulado. Además, el término derivativo introduce sobre-correcciones cuando el workload cambia rápidamente, resultando en un chattering sostenido que, al no tener el caracter anticipatorio del agente PPO, termina ahogando los nodos y las colas de peticiones.
 
-En el cluster real, PID se ubica entre BAI y PPO en términos de recompensa ($-3{,}34$), beneficiándose nuevamente del régimen de baja carga que no expone su fragilidad. Es interesante destacar que PID mantiene la utilización de CPU clavada en su valor de consigna en todos los escenarios ($\overline{\text{cpu}} \approx 0{,}60$), independientemente del workload. Este comportamiento es coherente con la naturaleza del controlador pero no responde a la lógica del problema: cuando el workload es bajo, mantener el CPU al $60\%$ implica desactivar nodos por encima de lo prudente, lo que aumenta la latencia frente a picos súbitos.
+
+En el entorno real, el comportamiento del controlador PID expone las mismas virtudes derivadas de su diseño matemático, pero esta vez viendose beneficiado por el régimen de baja carga del experimento. Resulta notable destacar la precisión del algoritmo PID, logrando mantener la utilización de CPU oscilando muy cerca en su valor de consigna en todos los tamaños evaluados. Esta caracteristica resulta en una optimizacion sumamente eficiente de los recursos disponibles, pero con la vulnerabilidad de colapsar ante picos subitos de demanda, ya que no posee un margen operativo para lidiar con estos, esto resulta en que el agente PPO logre amortiguar mejor estos, a costo de un mayor gasto de infraestructura
+
 
 <br>
 
@@ -684,7 +770,7 @@ La Figura 4.13 sintetiza el desempeño agregado de los tres agentes. En el panel
 ![ppo_improvement](../resultados_graficos/discussion_figures/ppo_improvement_over_baselines.png)
 _Figura 4.14: Mejora porcentual promedio de PPO respecto a cada baseline en las métricas de latencia, errores y costo._
 
-La Figura 4.14 cuantifica las ventajas relativas de PPO en los tres ejes que importan operacionalmente. Frente a PID en simulación, PPO logra un $39\%$ menos de latencia y un $48\%$ menos de errores, lo que confirma que la política aprendida es estructuralmente superior a un controlador puramente reactivo. El costo asociado es un $36\%$ mayor, contrapartida natural del margen anticipatorio incorporado en la política. Frente a BAI en simulación el panorama es mixto: PPO mejora la latencia un $13\%$ pero acumula un $41\%$ más de errores en promedio (efecto dominado por el caso de $N=25$ ya discutido) y sostiene un costo un $21\%$ más elevado. En el cluster real, la ausencia de errores en los tres agentes neutraliza dos tercios del análisis y deja al costo como única dimensión diferenciada, terreno donde los baselines son más eficientes.
+La Figura 4.14 cuantifica las ventajas relativas de PPO en los tres ejes que importan operacionalmente. Frente a PID en simulación, PPO logra un $39\%$ menos de latencia y un $48\%$ menos de errores, lo que confirma que la política aprendida es estructuralmente mejor que un controlador puramente reactivo. El costo asociado es un $36\%$ mayor, contrapartida natural del margen anticipatorio incorporado en la política. Frente a BAI en simulación el panorama es mixto: PPO mejora la latencia un $13\%$ pero acumula un $41\%$ más de errores en promedio (efecto dominado por el caso de $N=25$ ya discutido) y sostiene un costo un $21\%$ más elevado. En el clúster real, la tasa de error registrada fue nula para todas las comparativas. Este resultado se atribuye a una limitación identificada en la captura de telemetría física, combinada con un horizonte de evaluación muy limitado; una restricción impuesta por el alto costo computacional de ejecutar las pruebas sobre hardware. Al neutralizarse esta métrica debido a las condiciones del ensayo, la diferencia principal radica en el costo operativo, escenario en el cual ambos baselines superan al agente.
 
 ![pareto](../resultados_graficos/discussion_figures/pareto_cost_vs_error.png)
 _Figura 4.15: Frente de Pareto entre costo operativo y tasa de errores para los tres agentes, por tamaño de cluster, en ambos entornos._
@@ -695,27 +781,34 @@ La Figura 4.15 complementa la lectura presentando explícitamente el espacio cos
 
 ## 4.5 Discusión integrada
 
-Los resultados de las Secciones 4.2, 4.3 y 4.4 admiten una lectura horizontal organizada en torno a tres ejes: la validez de las decisiones de diseño tomadas durante la construcción del entorno y de la función de recompensa, las limitaciones reveladas por la evaluación empírica y el alcance efectivo de la comparación contra baselines clásicos.
+El análisis conjunto de la evaluación revela que el agente PPO asimiló exitosamente las restricciones operativas del clúster, pero expone vulnerabilidades arquitectónicas severas frente a estrategias de control clásicas. Los resultados se estructuran en torno a tres ejes fundamentales: la validación del diseño, las limitaciones estructurales de la política, y el impacto del entorno físico. 
 
-En lo relativo al diseño, varias hipótesis incorporadas en el Marco Teórico encuentran respaldo en los datos. La zona muerta de CPU definida entre el $40\%$ y el $85\%$ cumple su objetivo: el agente PPO opera en todos los tamaños y entornos dentro de esa banda, con valores medios de utilización entre $0{,}32$ y $0{,}53$ que evitan tanto la sobreaprovisión ociosa como el riesgo de saturación crítica. El término de fricción $\delta$ se valida cualitativamente en las ventanas tardías del entrenamiento (Figuras 4.9 y 4.10) y, sobre todo, en la respuesta limpia al patrón diente de sierra del `TrafficGenerator` sobre el cluster real (Figura 4.12), donde no se observa el efecto chattering que la fricción busca suprimir. La normalización fleet-wide de la profundidad de cola, descrita en la Sección 3.1, demuestra su utilidad indirecta al evitar que las decisiones de escalado introduzcan oscilaciones artificiales en la señal de cola observada por el agente. Finalmente, la función de penalización pura, sin componentes positivos, no impide la convergencia del agente y produce políticas con comportamiento operativo razonable, lo que confirma la hipótesis de Sutton y Barto sobre la suficiencia de las señales de minimización de daño para esta clase de problemas (Sutton & Barto, 2018).
-
-En cuanto a las limitaciones reveladas por la evaluación, dos merecen ser señaladas. La primera es la pérdida de precisión del ruteo fino en $N=25$, donde el actor PPO no logra mantener una distribución de pesos calibrada sobre un espacio de acción de $26$ dimensiones continuas y cede terreno frente a BAI en la métrica de error. Esta limitación es propia del algoritmo en su configuración actual y podría mitigarse con redes de mayor capacidad, con arquitecturas de actor jerárquicas que separen la decisión de escalado de la decisión de ruteo, o con técnicas de regularización adicionales sobre la entropía de la política. La segunda limitación es la brecha sim-to-real residual: aunque la transferencia preserva la estructura general de la política, el cluster real opera en un régimen de workload sistemáticamente más bajo que el simulado (promedios de $0{,}25$ a $0{,}38$ frente a $0{,}34$ a $0{,}45$), lo que erosiona la ventaja del margen anticipatorio aprendido y favorece a los baselines más conservadores en términos de costo.
-
-Esta brecha de régimen también condiciona el alcance de la comparativa contra baselines. La evaluación sobre el cluster real, al no acercarse a la zona de saturación, neutraliza la principal ventaja teórica del aprendizaje por refuerzo: la anticipación a la congestión antes de que se materialicen los errores. En consecuencia, las recompensas observadas en el cluster real reflejan en gran medida el costo operativo medio, dimensión en la que los baselines parten con la ventaja estructural de no llevar incorporado un margen de seguridad. La conclusión metodológica es clara: para que la comparativa exponga el rango completo de capacidades del agente PPO, la evaluación sobre infraestructura física debería incluir patrones de tráfico que lleven al cluster a la frontera de su capacidad agregada, ya sea elevando el techo del workload por encima del actual o escalando dinámicamente la demanda con el tamaño de la flota. Este punto se retoma en las Conclusiones como línea de trabajo futuro.
-
+En lo relativo al diseño, la transferencia de aprendizaje (Sim-to-Real) y la definición de la zona de recompensa demostraron ser efectivas. La zona muerta de CPU configurada entre el $40\%$ y el $85\%$ forzó con éxito a la red neuronal a operar sistemáticamente dentro de esa banda, ayudando al agente a converger rapidamente con una politica de contro, evitando la sobreaprovisión extrema y la saturación. Asimismo, la Fase 2 validó que la política preentrenada en un modelo puramente matemático (Teoría de Colas M/M/1) puede adaptarse a la infraestructura de contenedores conservando su capacidad de seguimiento de carga, logrando procesar el tráfico inyectado sin requerir un entrenamiento desde cero. No obstante, la evaluación empírica destapó dos fallos arquitectónicos. El primero es la falta de eficacia del término de fricción ($\delta$) para suprimir el efecto chattering dada su configuracion actual. Al normalizar la cantidad de eventos de escalado por el total de iteraciones, se constató que PPO modifica el tamaño de la flota en más del $70\%$ de los pasos, independientemente de si opera en simulación o sobre el clúster real. Esto se debe a que las altas penalizaciones impuestas a los errores de red dentro de la funcion de recompensa, obligaron a la red neuronal a adoptar un comportamiento muy reactivo frente al ruido estocástico de la demanda. El segundo fallo se manifiesta al escalar el tamaño de la flota. Al obligar al agente a emitir valores continuos simultáneos cada vez mayores para el ruteo, la precisión del balanceo colapsa. El agente estima correctamente la capacidad global requerida, pero falla en la distribución propia del tráfico dentro de la estructura, provocando un severo desbalance en la distribucion de carga que dispararon la tasa de errores en simulación. Finalmente, la comparativa contra los baselines expuso el compromiso (trade-off) operativo del sistema. Frente a controladores clásicos como PID y BAI, el agente PPO exhibió un perfil más conservador y altamente reactivo. Al utilizar promedios temporales e integrales de error, los baselines lograron filtrar el ruido de alta frecuencia y operar con gran estabilidad (menos del $10\%$ de eventos de escalado por paso), maximizando así la rentabilidad operativa. Por su parte, el agente PPO demostró una sólida capacidad de adaptación preventiva, priorizando en todo momento la protección del SLA. No obstante, su estrategia de sobreaprovisionamiento sostenido para blindar los márgenes de seguridad conlleva un costo de infraestructura mucho mayor. Esto genera que, frente a regímenes de carga moderados donde el límite del clúster no se encuentra bajo amenaza inminente, la política preventiva del agente resulte menos económica en comparación con la rigidez de los métodos tradicionales.
 <br>
 
 # 5. Conclusiones finales
 
-El presente trabajo demostró que un agente de aprendizaje por refuerzo basado en Proximal Policy Optimization puede aprender una política conjunta de balanceo de cargas y autoescalado horizontal para un cluster Docker, y que dicha política se transfiere desde un entorno simulado basado en teoría de colas hacia un cluster real sin un colapso de desempeño. Los hiperparámetros seleccionados mediante optimización Bayesiana sobre Weights & Biases permitieron una convergencia rápida y consistente en Fase 1, mientras que el fine-tuning de Fase 2 cerró la brecha sim-to-real con un presupuesto de pasos dos órdenes de magnitud menor.
+El presente trabajo demostró que un agente de aprendizaje por refuerzo basado en Proximal Policy Optimization puede aprender una política conjunta de balanceo de cargas y autoescalado horizontal para un cluster Docker, y que dicha política se transfiere desde un entorno simulado basado en teoría de colas hacia un cluster real sin un colapso de desempeño. Los hiperparámetros seleccionados mediante optimización Bayesiana sobre Weights & Biases permitieron una convergencia rápida y consistente de la politica en Fase 1, mientras que el fine-tuning de Fase 2 cerró la brecha sim-to-real con un presupuesto de pasos dos órdenes de magnitud menor.
 
-La evaluación del escalamiento mostró que la política aprendida es estructuralmente invariante al tamaño del cluster: el agente preserva la zona muerta de CPU, mantiene la latencia muy por debajo del umbral de SLA y reacciona al workload con un margen positivo acotado para los cinco tamaños considerados. La única excepción significativa corresponde al caso $N=25$ en simulación, donde el ruteo fino sobre un espacio de acción de $26$ dimensiones pierde precisión y eleva la tasa de error agregada.
+La evaluación demostro que el agente asimila correctamente los límites operativos, es decir, mantiene la utilización de CPU en zonas seguras, reacciona a los incrementos de demanda con márgenes de seguridad, y sostiene métricas de latencia estables. Una revelacion llamativa del estudio fue el como influyo el hardware en el experimento. Mientras que la latencia nula del simulador matemático penalizaba severamente la volatilidad de la red neuronal, la latencia natural de los buffers de HAProxy y los tiempos de orquestación de Docker actuaron como un filtro pasa-bajas, amortiguando las decisiones erráticas del agente y evitando la degradación del servicio en el entorno real. 
 
-La comparativa contra los baselines de la industria reveló un panorama matizado. En simulación, PPO supera de forma neta al controlador PID en latencia y errores, pero compite cabeza a cabeza con el baseline de umbrales BAI, alternando posiciones según el tamaño del cluster. En el cluster real, el régimen de workload alcanzado durante la evaluación no expone la principal ventaja teórica del agente aprendido, lo que coloca al baseline más simple en la cabeza del ranking. Esta observación no invalida la propuesta sino que delimita su valor: el aprendizaje por refuerzo aporta beneficios diferenciales cuando el sistema opera cerca de la frontera de capacidad, escenario que el banco de pruebas físico utilizado no llegó a explorar.
+Respecto a la comparativa contra los baselines de la industria (BAI y PID), los resultados expusieron un panorama delimitado en gran medida por el diseño del experimento y la estructura de la función de recompensa. El agente PPO demostró superioridad frente a controladores reactivos en la prevención de errores bajo estrés extremo en simulación, pero su política resultó penalizada en términos de eficiencia operativa y estabilidad (chattering). Las elevadas penalizaciones por violaciones de SLA en el preentrenamiento forzaron al agente a adoptar una postura de alerta, resultando en un sobreaprovisionamiento preventivo constante. 
 
-Como líneas de trabajo futuro se identifican varias direcciones prometedoras. La primera y más inmediata consiste en repetir la evaluación sobre el cluster real con un workload escalado proporcionalmente al tamaño de la flota, de modo que el factor de utilización pico se mantenga cerca de $\rho \approx 1{,}0$ para todos los $N$. Esto requeriría recalibrar el parámetro `NODE_CAPACITY` con el script `utils/calibrate_node_capacity.py` y ajustar el techo de `TOTAL_USERS` en consecuencia. La segunda dirección apunta a abordar la limitación de ruteo en clusters grandes mediante una arquitectura jerárquica del actor que separe la decisión de escalado de la decisión de pesos de ruteo, o mediante una representación más compacta del espacio de acción que aproveche la simetría entre nodos equivalentes. La tercera dirección, de carácter más exploratorio, consiste en evaluar el comportamiento del agente bajo cambios en la topología del cluster, como la incorporación de zonas de disponibilidad heterogéneas o de nodos con capacidades de CPU distintas, lo que requeriría incluir el límite de recursos como característica observable. Finalmente, el reemplazo del controlador HAProxy por un proxy programable como Envoy permitiría exponer al agente métricas L7 adicionales como el tiempo de procesamiento por endpoint o la distribución del tamaño de los payloads, ampliando el espacio de observación y la riqueza de las decisiones posibles.
+En el clúster real, las métricas no reflejaron una ventaja del agente debido algunos factores. Un espacio de evaluacion muy acotado en el cual el régimen de carga que no expuso la principal ventaja teórica del agente; unas metricas nulas de errores en el entorno real, lo que lleva a pensar en revisar la captura de errores y como el agente computa estas, tanto asi como aumento del tamaño del entrenamiento para exponer al agente a una mayor cantidad de situaciones para su aprendizaje. Bajo estas condiciones, la rigidez económica de los controladores estáticos se impuso en el ranking. Esta observación no invalida la propuesta, sino que delimita su valor; el aprendizaje por refuerzo aporta beneficios diferenciales cuando el sistema opera cerca de la frontera de capacidad, protegiendo el servicio allí donde la inflexibilidad de los umbrales estáticos colapsa; un escenario que el banco de pruebas físico utilizado no llegó a explorar a fondo.
 
-Más allá de estas líneas de extensión, el resultado central del proyecto es la viabilidad metodológica del enfoque: una política aprendida sobre un modelo matemático de colas y refinada sobre infraestructura real puede operar un cluster Docker durante varios miles de pasos sin generar errores y manteniendo la utilización dentro de la banda objetivo, con una arquitectura de software modular en la que el plano de control, la traducción a infraestructura y la generación de carga están claramente desacoplados. Esa modularidad, sumada a la disponibilidad de los artefactos de entrenamiento y evaluación, deja un punto de partida concreto para iterar sobre las limitaciones identificadas en lugar de reconstruir el sistema desde cero.
+A partir de estas limitaciones, se identifican las siguientes direcciones como trabajo futuro:
+
+- **Aumentar el tiempo de entrenamiento en el entorno real:** Extender la duración de la Fase 2 para exponer al agente a una mayor variedad de situaciones y picos de carga. Esto le permitirá aprender a reaccionar mejor ante patrones de tráfico inesperados en la infraestructura física.
+
+- **Ampliar la ventana de evaluación:** Realizar pruebas con muchas más iteraciones (superando el límite actual de $2.000$ pasos). Esto permitirá someter al clúster a un estrés prolongado, obtener métricas estadísticas más fiables y evitar problemas esporádicos en la captura de errores.
+
+- **Mejorar la distribución de carga:** Investigar nuevas formas de rutear el tráfico dependiendo de la infraestructura disponible (por ejemplo, separando la decisión de escalado de la de ruteo) para evitar los embotellamientos asimétricos al escalar la cantidad de nodos.
+
+- **Soporte para clústeres heterogéneos:** Expandir el entorno para que el agente pueda administrar infraestructuras compuestas por nodos con diferentes capacidades de hardware (distintos límites de CPU y RAM)
+
+- **Aplicar filtros temporales en las observaciones:** Incorporar técnicas (como promedios móviles o Frame Stacking) que le permitan a la red neuronal filtrar el ruido natural del entorno. Esto reducirá el chattering y evitará el sobreaprovisionamiento sin corromper la política del agente.
+
+Más allá de estas líneas de extensión, el resultado central del proyecto es la viabilidad del enfoque aplicado; una política aprendida sobre un modelo matemático de colas y refinada sobre una infraestructura real puede operar un clúster Docker durante miles de pasos manteniendo la utilización dentro de la banda objetivo.
 
 ## Bibliografía
 
