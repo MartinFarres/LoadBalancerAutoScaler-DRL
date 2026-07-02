@@ -1,6 +1,8 @@
 # Load Balancer Auto-Scaler with Deep Reinforcement Learning (PPO)
 
-An autonomous cluster orchestration system that uses **Proximal Policy Optimization (PPO)** to simultaneously manage **load balancing** and **horizontal auto-scaling** for a Docker-based microservice cluster. The agent learns to dynamically distribute traffic weights and scale containers up or down in response to real-time workload metrics.
+An autonomous cluster orchestration system that uses **Proximal Policy Optimization (PPO)** to simultaneously manage **load balancing** and **horizontal auto-scaling** for a Docker-based microservice cluster. Instead of hand-tuned Round Robin routing and static CPU thresholds, a single learned policy observes per-container CPU/RAM/latency/error/queue metrics and outputs both routing weights and a scale decision every step, trained first on a mathematical M/M/1 queueing simulation and then fine-tuned on a live Docker + HAProxy + Locust cluster.
+
+This is the code companion to a research report ([`proyecto_final/proyecto_final.md`](proyecto_final/proyecto_final.md)) that evaluates the agent against two industry baselines (static-threshold scaling and a PID controller) across five cluster sizes, in both simulation and real infrastructure, including a candid look at where the learned policy still falls short. See [Results](#results) below for a summary.
 
 ---
 
@@ -10,10 +12,10 @@ An autonomous cluster orchestration system that uses **Proximal Policy Optimizat
 
 The system is composed of four layers:
 
-1. **Control Plane** — The PPO agent sends an action vector (routing weights + scale decision) to the Bridge API, and receives back the current observation space (per-container metrics).
-2. **Infrastructure Management** — The Bridge uses the Docker SDK to start/stop containers and reads hardware metrics via Linux cgroups.
-3. **L7 Routing & Monitoring** — HAProxy distributes traffic according to the weights set by the agent and reports latency, HTTP error rates, and per-server queue depth.
-4. **Data Plane** — Locust generates realistic, variable HTTP traffic patterns against the cluster entry point.
+1. **Control Plane** - The PPO agent sends an action vector (routing weights + scale decision) to the Bridge API, and receives back the current observation space (per-container metrics).
+2. **Infrastructure Management** - The Bridge uses the Docker SDK to start/stop containers and reads hardware metrics via Linux cgroups.
+3. **L7 Routing & Monitoring** - HAProxy distributes traffic according to the weights set by the agent and reports latency, HTTP error rates, and per-server queue depth.
+4. **Data Plane** - Locust generates realistic, variable HTTP traffic patterns against the cluster entry point.
 
 ---
 
@@ -30,11 +32,51 @@ The simulated environment models CPU, RAM and queue depth (Little's Law), latenc
 
 ---
 
+## Results
+
+The final policy (`ppo_lb_production_ready_N_nodes.zip`) was benchmarked against two classical baselines: a static CPU-threshold scaler (**BAI**) and a **PID controller** regulating CPU to a 60% setpoint, across five cluster sizes (`N ∈ {5, 10, 15, 20, 25}`), in both the simulated environment (250k steps) and the real Docker cluster (2k steps). All three agents ran the same `TrafficGenerator` patterns so differences are attributable to the control policy alone. Full derivations, per-agent metric tables, and discussion live in [`proyecto_final/proyecto_final.md`](proyecto_final/proyecto_final.md) (§4.3-§4.5).
+
+### Phase 1 converges for every cluster size
+
+<img src="resultados_graficos/discussion_figures/phase1_learning_curves_overlay.png" width="720" alt="Phase 1 learning curves overlay for N=5..25">
+
+All five cluster sizes converge within ~200k of the ~1M training steps, despite starting from very different reward floors (both the operational-cost penalty and the action-space dimensionality scale with `n_max`). Once converged, mean CPU usage stays within 40-48% for every size, inside the reward function's efficient band.
+
+### The agent learns to track workload with an anticipatory margin
+
+<img src="resultados_graficos/ppo_5_nodes/workload_behavior_sim_full.png" width="720" alt="PPO active containers vs workload, simulated, N=5, full evaluation run">
+
+Active containers (orange) follow the incoming workload (blue) with a small positive margin, scaling ahead of demand rather than reacting after saturation, the intended effect of the CPU dead-zone and queue-backpressure reward terms.
+
+### PPO vs. industry baselines
+
+<img src="resultados_graficos/discussion_figures/reward_bars_by_agent_N.png" width="720" alt="Mean reward per agent and cluster size, simulated vs real">
+
+| Environment  | Best avg. reward | Failed requests (total, sim)                                   | Cost efficiency (avg. users served per active node) |
+| ------------ | ----------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
+| Simulated    | BAI (-5.68)       | BAI leads for N ≤ 15; PPO edges ahead at N=20; PPO collapses at N=25 (42.2k vs BAI's 22.6k) | BAI ~10-10.7 usr/node, PID ~12-14 usr/node, PPO 7.3-9.7 usr/node |
+| Real cluster | BAI (-3.04)       | 0 failed requests for all three agents (short 2k-step window)     | BAI and PID are more cost-efficient under the light real-world traffic regime |
+
+<img src="resultados_graficos/discussion_figures/pareto_cost_vs_error.png" width="720" alt="Pareto front: provisioning cost vs error rate">
+
+No agent strictly dominates in simulation: PPO occupies the low-error/higher-cost region, PID the low-cost/high-error region, and BAI sits in between, so the Pareto front is made up of points from all three agents. On the real cluster, all three collapse to zero error and cost becomes the only discriminating axis; the report flags this as partly a telemetry-capture limitation compounded by the short evaluation horizon, not solid evidence that PPO matches the baselines there.
+
+**Key takeaways** (see §4.5 and Conclusions in the report for the full discussion):
+
+- The learned policy generalizes across cluster sizes with no retraining: CPU stays in the reward's efficient band and latency stays under 16% of the SLA ceiling at every `N`, in both environments.
+- The anti-chattering friction term ($\delta$) does not fully do its job in practice: PPO changes fleet size in more than 70% of evaluation steps, versus under 10% for BAI, because the reward's heavy error penalty pushes the policy toward a reactive, twitchy scaling behavior.
+- Routing precision degrades as the action space grows: PPO is competitive with BAI on failed requests up to N=20, then collapses at N=25 (26-dimensional continuous routing weights), the case where the reward's fine-grained load-balancing decision breaks down fastest.
+- PPO is consistently less cost-efficient than BAI: its learned safety margin means fewer served users per active container across every cluster size.
+- Sim-to-real transfer works structurally (Phase 2 starts inside the Phase 1 asymptotic reward range with no cold-start collapse), but the real-cluster comparison itself is inconclusive: the short 2,000-step evaluation window and a suspected telemetry-capture gap mean zero measured errors for all three agents, hiding whatever real advantage or disadvantage PPO has under real hardware.
+- Identified next steps: temporal smoothing of observations (e.g. frame stacking) to curb chattering, a hierarchical actor that separates the scaling decision from routing weights, and a longer/more punishing Phase 2 + evaluation budget to get a real read on real-cluster performance.
+
+---
+
 ## Project Structure
 
 ```
 .
-├── main.py                          # Main entrypoint — run all pipelines from here
+├── main.py                          # Main entrypoint - run all pipelines from here
 ├── requirements.txt
 ├── cleanup.sh                       # Kill orphan processes and Docker containers
 │
@@ -59,7 +101,7 @@ The simulated environment models CPU, RAM and queue depth (Little's Law), latenc
     ├── test_agent.py                # Run inference with a trained PPO model
     ├── baseline_agent.py            # Industry baseline (Round Robin + CPU thresholds)
     ├── baseline_PID.py              # Classical control baseline (PID controller)
-    ├── callbacks.py                 # Custom SB3 callback — logs metrics to CSV + TensorBoard
+    ├── callbacks.py                 # Custom SB3 callback - logs metrics to CSV + TensorBoard
     ├── visualizer.py                # Plots learning curves and testing summary tables
     └── test_env.py                  # Gymnasium environment sanity checker
 ```
@@ -107,7 +149,7 @@ This executes in sequence: simulated pre-training → real fine-tuning → all t
 
 ---
 
-## `main.py` — Arguments Reference
+## `main.py` - Arguments Reference
 
 | Argument                 | Short  | Type  | Default                | Description                                                                  |
 | ------------------------ | ------ | ----- | ---------------------- | ---------------------------------------------------------------------------- |
@@ -137,17 +179,17 @@ So `-i` is a convenient single knob, while the specific flags (`-si`, `-ri`, …
 | `test_ppo`                                  | `-ti`         | `1000`  |
 | `test_baseline`                             | `-ai`         | `1000`  |
 | `test_pid`                                  | `-pi`         | `1000`  |
-| `sweep`                                     | —             | `200000`|
+| `sweep`                                     | -             | `200000`|
 
-> The `all` pipeline is multi-phase, so a single `-i` can't map to its different phases — it **ignores `-i`**
+> The `all` pipeline is multi-phase, so a single `-i` can't map to its different phases - it **ignores `-i`**
 > and uses each phase's specific flag (`-si`/`-ri`/`-sti`/`-rti`) or that phase's default.
 
 ### `--pipeline` options
 
 | Value           | Description                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `simulado`      | Phase 1 only — trains the agent in the fast mathematical simulator. No Docker required.                       |
-| `real`          | Phase 2 only — fine-tunes an existing model on a live Docker cluster. Requires Phase 1 model.                 |
+| `simulado`      | Phase 1 only - trains the agent in the fast mathematical simulator. No Docker required.                       |
+| `real`          | Phase 2 only - fine-tunes an existing model on a live Docker cluster. Requires Phase 1 model.                 |
 | `tests_sim`     | Runs all three comparison tests (BAI, PID, PPO) in **simulated** mode only. No Docker required.               |
 | `tests_real`    | Runs all three comparison tests (BAI, PID, PPO) in **real** mode only (each spins up its own Docker cluster). |
 | `test_ppo`      | Evaluates the trained PPO model in both simulated and real modes, generating a metrics summary table for each.|
@@ -161,8 +203,8 @@ So `-i` is a convenient single knob, while the specific flags (`-si`, `-ri`, …
 | Command                                         | What it does                                                              |
 | ----------------------------------------------- | ------------------------------------------------------------------------- |
 | `python main.py -p all -n 5`                    | Full pipeline (Phase 1 → Phase 2 → sim tests → real tests) with defaults.  |
-| `python main.py -p simulado -n 5 -si 200000`    | Phase 1 only — simulated training. No Docker needed.                       |
-| `python main.py -p real -n 5 -ri 5000`          | Phase 2 only — real Docker-cluster fine-tuning. Requires a Phase 1 model.  |
+| `python main.py -p simulado -n 5 -si 200000`    | Phase 1 only - simulated training. No Docker needed.                       |
+| `python main.py -p real -n 5 -ri 5000`          | Phase 2 only - real Docker-cluster fine-tuning. Requires a Phase 1 model.  |
 | `python main.py -p tests_sim -n 5 -sti 1000`    | All three agents (BAI, PID, PPO) evaluated in simulated mode only.         |
 | `python main.py -p tests_real -n 5 -rti 1000`   | All three agents evaluated in real mode only.                             |
 | `python main.py -p test_ppo -n 5 -ti 3000`      | Evaluate the trained PPO agent (both sim and real).                       |
@@ -203,7 +245,7 @@ python main.py -p all -n 10
 
 Each script in `environment/` can also be run standalone.
 
-### Train — Phase 1 (Simulated)
+### Train - Phase 1 (Simulated)
 
 ```bash
 python environment/train_agent.py train_phase_1_simulation \
@@ -212,7 +254,7 @@ python environment/train_agent.py train_phase_1_simulation \
   --file training_metrics.csv
 ```
 
-### Train — Phase 2 (Real Docker cluster)
+### Train - Phase 2 (Real Docker cluster)
 
 > Requires the Bridge API and Docker cluster to be running first.
 
@@ -236,16 +278,16 @@ python environment/test_agent.py --nodes 5 --iterations 5000
 ### Test Baselines
 
 ```bash
-# Industry baseline — simulated
+# Industry baseline - simulated
 python environment/baseline_agent.py --nodes 5 --iterations 5000 --simulated
 
-# Industry baseline — real
+# Industry baseline - real
 python environment/baseline_agent.py --nodes 5 --iterations 5000
 
-# PID controller baseline — simulated
+# PID controller baseline - simulated
 python environment/baseline_PID.py --nodes 5 --iterations 5000 --simulated
 
-# PID controller baseline — real
+# PID controller baseline - real
 python environment/baseline_PID.py --nodes 5 --iterations 5000
 ```
 
@@ -396,12 +438,12 @@ This will kill any orphaned `uvicorn`, `locust`, `tensorboard`, and training pro
 
 Two baselines are implemented for benchmarking against the PPO agent:
 
-**Industry Baseline** (`baseline_agent.py`) — Replicates the most common production approach:
+**Industry Baseline** (`baseline_agent.py`) - Replicates the most common production approach:
 
 - Load balancing: Round Robin (equal weights for all active nodes)
 - Auto-scaling: Static CPU thresholds (scale up if CPU > 75%, scale down if CPU < 25%)
 
-**PID Controller Baseline** (`baseline_PID.py`) — Classical control theory approach:
+**PID Controller Baseline** (`baseline_PID.py`) - Classical control theory approach:
 
 - Maintains average CPU usage at a 60% setpoint using a PID controller (Kp=1.5, Ki=0.1, Kd=0.5)
 - Load balancing: Round Robin
