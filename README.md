@@ -1,8 +1,39 @@
+<div align="center">
+
 # Load Balancer Auto-Scaler with Deep Reinforcement Learning (PPO)
+
+**Joint load balancing and horizontal auto-scaling of a Docker microservice cluster, learned end-to-end with Proximal Policy Optimization.**
+
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Stable--Baselines3](https://img.shields.io/badge/RL-PPO%20%E2%80%A2%20Stable--Baselines3-orange)](https://stable-baselines3.readthedocs.io/)
+[![Infra](https://img.shields.io/badge/infra-Docker%20%2B%20HAProxy%20%2B%20Locust-2496ED)](https://www.docker.com/)
+
+</div>
 
 An autonomous cluster orchestration system that uses **Proximal Policy Optimization (PPO)** to simultaneously manage **load balancing** and **horizontal auto-scaling** for a Docker-based microservice cluster. Instead of hand-tuned Round Robin routing and static CPU thresholds, a single learned policy observes per-container CPU/RAM/latency/error/queue metrics and outputs both routing weights and a scale decision every step, trained first on a mathematical M/M/1 queueing simulation and then fine-tuned on a live Docker + HAProxy + Locust cluster.
 
 This is the code companion to a research report ([`proyecto_final/proyecto_final.md`](proyecto_final/proyecto_final.md)) that evaluates the agent against two industry baselines (static-threshold scaling and a PID controller) across five cluster sizes, in both simulation and real infrastructure, including a candid look at where the learned policy still falls short. See [Results](#results) below for a summary.
+
+---
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Training Pipeline](#training-pipeline)
+- [Results](#results)
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [`main.py` Arguments Reference](#mainpy-arguments-reference)
+- [Running Scripts Directly](#running-scripts-directly)
+- [Bridge API Endpoints](#bridge-api-endpoints)
+- [Observation Space and Action Space](#observation-space-and-action-space)
+- [Reward Function](#reward-function)
+- [Reward Weight Sensitivity Analysis (Saltelli/Sobol)](#reward-weight-sensitivity-analysis)
+- [Monitoring](#monitoring)
+- [Cleanup](#cleanup)
+- [Baselines for Comparison](#baselines-for-comparison)
+- [Bibliography](#bibliography)
 
 ---
 
@@ -92,8 +123,10 @@ No agent strictly dominates in simulation: PPO occupies the low-error/higher-cos
 │       └── requirements.txt
 │
 ├── utils/
-│   ├── config.py                    # Central tunables (TOTAL_USERS, CPU/RAM limits, queue ceiling, seed)
-│   └── traffic_generator.py         # Stochastic workload pattern generator (shared by sim + Locust)
+│   ├── config.py                    # Central tunables (TOTAL_USERS, CPU/RAM limits, queue ceiling, seed, reward weights)
+│   ├── traffic_generator.py         # Stochastic workload pattern generator (shared by sim + Locust)
+│   ├── calibrate_node_capacity.py   # Standalone probe that measures NODE_CAPACITY on a real node
+│   └── sensitivity_analysis.py      # Saltelli/Sobol sensitivity analysis of the reward weights (see below)
 │
 └── environment/
     ├── environment.py               # Gymnasium environment (real + simulated modes)
@@ -125,9 +158,10 @@ docker build -t dummy_server:latest .
 pip install -r requirements.txt
 ```
 
-> **Note:** Container resource limits and workload scale are centralized in [`utils/config.py`](utils/config.py)
-> (`CONTAINER_CPU_CORES`, `MAX_MEMORY`, `TOTAL_USERS`, `MAX_QUEUE_DEPTH`, `SEED`). Edit them there rather than
-> hunting through the codebase.
+> **Note:** Container resource limits, workload scale, and reward weights are centralized in
+> [`utils/config.py`](utils/config.py) (`CONTAINER_CPU_CORES`, `MAX_MEMORY`, `TOTAL_USERS`, `MAX_QUEUE_DEPTH`,
+> `SEED`, `REWARD_WEIGHTS`, `REWARD_WEIGHT_BOUNDS`, `USERS_PER_NODE`). Edit them there rather than hunting
+> through the codebase.
 
 ---
 
@@ -149,6 +183,7 @@ This executes in sequence: simulated pre-training → real fine-tuning → all t
 
 ---
 
+<a id="mainpy-arguments-reference"></a>
 ## `main.py` - Arguments Reference
 
 | Argument                 | Short  | Type  | Default                | Description                                                                  |
@@ -334,7 +369,7 @@ The Bridge (`API/bridge.py`) exposes a FastAPI server on port `8000` that acts a
 
 ---
 
-## Observation Space & Action Space
+## Observation Space and Action Space
 
 ### Observation Space
 
@@ -382,16 +417,66 @@ R = -(latency + errors + cost + cpu_saturation + ram_saturation + queue + overpr
 | --------------------- | ------ | ------------------------------------------------------------------------- |
 | Latency               | 10.0   | High response times (squared; free below a 0.1 normalized floor)          |
 | Errors                | 50.0   | HTTP 5xx responses                                                        |
-| Cost                  | 8.0    | Active containers (`active / n_max`)                                      |
+| Cost                  | 5.0    | Active containers (`active / n_max`)                                      |
 | CPU hard saturation   | 15.0   | Per-node CPU above 92% (added on top of the preventive penalty)          |
 | RAM saturation        | 15.0   | Per-node RAM above 85%                                                    |
-| Overprovision         | 6.0    | Idle containers (per-node CPU below the 40% target)                       |
+| Overprovision         | 4.0    | Idle containers (per-node CPU below the 40% target)                       |
 | Preventive saturation | 5.0    | Per-node CPU above the 85% safe ceiling (soft pre-collapse penalty)       |
-| Queue Backpressure    | 5.0    | Request queue depth (early indicator of impending latency and errors)     |
+| Queue Backpressure    | 15.0   | Request queue depth (early indicator of impending latency and errors)     |
 | Scale friction        | 1.0    | Reversing scale direction (up→down / down→up) to suppress chattering      |
 | Total failure         | −200.0 | All containers offline (terminal)                                         |
 
-> Weights live in `reward_function` in [`environment/environment.py`](environment/environment.py).
+> Weights default to `REWARD_WEIGHTS` in [`utils/config.py`](utils/config.py) (the single source of
+> truth) and are applied in `reward_function` in [`environment/environment.py`](environment/environment.py).
+> `LoadBalancerEnv` accepts an optional `reward_weights` override for sensitivity analysis, see the
+> next section.
+
+---
+
+<a id="reward-weight-sensitivity-analysis"></a>
+## Reward Weight Sensitivity Analysis (Saltelli / Sobol)
+
+The 8 reward weights above (`REWARD_WEIGHTS` in `utils/config.py`; `W_SATURATION` appears twice in the
+table since it drives both the CPU and RAM saturation terms, and "Total failure" is a fixed terminal
+penalty rather than a sampled weight) were hand-tuned, with no systematic evidence for their relative
+magnitudes. `utils/sensitivity_analysis.py` runs a two-stage, data-driven study to determine which
+weights actually matter and, given a target range of cluster sizes, which combination of values
+generalizes best. Full methodology, every design decision and its rationale, and how to interpret
+the output live in [`SALTELLI_SENSITIVITY.md`](SALTELLI_SENSITIVITY.md); this section is a quick
+reference for running it. No Docker required, it only uses the simulated environment.
+
+| Stage | Command | What it does |
+| ----- | ------- | ------------- |
+| **1. Sensitivity** | `sensitivity_analysis.py sensitivity` | At one fixed cluster size, Saltelli-samples the 8 weights, mini-trains a fresh PPO per sample, and computes Sobol indices (S1/ST) per KPI (latency, error rate, SLA violations, cost, scaling events) to rank which weights matter most. |
+| **2. Robust search** | `sensitivity_analysis.py robust-search` | Given the influential weights from Stage 1, searches for the combination that best generalizes across several cluster sizes (`FLEET_SIZES = [5, 10, 15, 20, 25]` by default), ranking candidates by a composite score. |
+
+```bash
+pip install -r requirements.txt   # adds SALib and scipy
+
+# Optional smoke test (a few minutes) to validate the pipeline runs end-to-end:
+python utils/sensitivity_analysis.py sensitivity --n 2 --train-timesteps 500 --eval-steps 200 --no-second-order
+
+# Stage 1: sensitivity at a reference cluster size (N=8 -> 144 mini-trainings, ~1-3.5h on CPU)
+python utils/sensitivity_analysis.py sensitivity --n 8 --nodes 5 --train-timesteps 20000 --eval-steps 2000
+
+# Inspect resultados_graficos/sensitivity_analysis/sobol_ST_{kpi}_n8.png, or pick the top-K
+# influential weights programmatically:
+python -c "
+import pandas as pd
+from utils.sensitivity_analysis import select_influential_weights
+df = pd.read_csv('training_results/sensitivity_analysis/sobol_indices_summary_n8_nodes5_tt20000.csv')
+print(select_influential_weights(df, top_k=4))
+"
+
+# Stage 2: robust search over the influential weights, across all 5 cluster sizes
+python utils/sensitivity_analysis.py robust-search --active-weights W_ERRORS,W_LATENCY,W_QUEUE,W_SATURATION --n 8
+```
+
+Both stages checkpoint after every sample to a deterministic CSV path, so an interrupted run resumes
+automatically instead of recomputing already-evaluated samples. Results land in
+`training_results/sensitivity_analysis/` and `training_results/robust_weight_search/` (the `_ranked.csv`
+from Stage 2 has the best combination in its first row), with figures in the matching
+`resultados_graficos/` subfolders.
 
 ---
 
@@ -415,6 +500,8 @@ Paths are suffixed with the node count (`N` = value of `--nodes`):
 | `./training_results/phase1_N_nodes/`          | Phase 1 training metrics CSV                              |
 | `./training_results/phase2_N_nodes/`          | Phase 2 fine-tuning metrics CSV                           |
 | `./training_results/testing_results_N_nodes/` | Per-run test metrics CSVs                                 |
+| `./training_results/sensitivity_analysis/`    | Saltelli/Sobol Stage 1 samples + KPI CSVs                  |
+| `./training_results/robust_weight_search/`    | Stage 2 multi-scale search samples + ranked CSVs           |
 | `./resultados_graficos/`                      | Learning curve PNGs and summary table images              |
 | `./logs_checkpoints/N_nodes/`                 | SB3 model checkpoints (saved every 2000 steps in Phase 2) |
 | `ppo_lb_simulated_base_N_nodes.zip`           | Saved Phase 1 model                                       |

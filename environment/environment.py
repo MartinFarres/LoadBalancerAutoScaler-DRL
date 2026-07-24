@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.traffic_generator import TrafficGenerator
-from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY
+from utils.config import MAX_MEMORY, MAX_QUEUE_DEPTH, NODE_CAPACITY, REWARD_WEIGHTS, TOTAL_USERS
 
 # Intervalo de reloj fijo (segundos) entre pasos del agente en modo real. Reemplaza la espera
 # dinamica anterior para que la carga de trafico (impulsada por el reloj de Locust) evolucione
@@ -22,15 +22,29 @@ class LoadBalancerEnv(gym.Env):
     Soporta modo Real (FastAPI/Docker) y modo Simulado (Matemático)
     """
     
-    def __init__(self, n_max=10, max_steps=100, max_memory=MAX_MEMORY, api_url="http://127.0.0.1:8000", simulated=False, testing=False):
+    def __init__(self, n_max=10, max_steps=100, max_memory=MAX_MEMORY, api_url="http://127.0.0.1:8000", simulated=False, testing=False, reward_weights=None, total_users=None):
         super(LoadBalancerEnv, self).__init__()
         self.n_max = n_max
-        self.max_memory = max_memory 
+        self.max_memory = max_memory
         self.max_steps = max_steps
         self.current_step = 0
         self.api_url = api_url
         self.simulated = simulated
         self.testing = testing
+
+        # Volumen de trafico simulado: default = utils.config.TOTAL_USERS, sobreescribible para que
+        # la busqueda robusta multi-escala (utils/sensitivity_analysis.py, Etapa 2) pueda asignarle a
+        # cada tamano de flota el total_users que le corresponde (ver utils.config.USERS_PER_NODE).
+        self.total_users = total_users if total_users is not None else TOTAL_USERS
+
+        # Pesos de la funcion de recompensa: default = utils.config.REWARD_WEIGHTS, sobreescribible
+        # por sample al correr el analisis de sensibilidad Saltelli/Sobol (ver utils/sensitivity_analysis.py).
+        self.reward_weights = dict(REWARD_WEIGHTS)
+        if reward_weights:
+            unknown = set(reward_weights) - set(REWARD_WEIGHTS)
+            if unknown:
+                raise ValueError(f"Unknown reward_weights keys: {unknown}")
+            self.reward_weights.update(reward_weights)
 
         # OBSERVATION SPACE
         self.observation_space = spaces.Box(
@@ -58,7 +72,7 @@ class LoadBalancerEnv(gym.Env):
         if self.simulated:
             self.sim_active_containers = np.zeros(self.n_max, dtype=bool)
             self.sim_active_containers[0] = True
-            self.traffic_gen = TrafficGenerator(testing=self.testing)
+            self.traffic_gen = TrafficGenerator(testing=self.testing, total_users=self.total_users)
             # Reloj de trafico CONTINUO (no se reinicia por episodio). Antes el ciclo de trafico
             # se reiniciaba en cada reset() y la carga se leia con current_step (que vuelve a 0),
             # asi que cada episodio solo veia el ~20% inicial (zona baja) de la funcion y nunca
@@ -362,17 +376,17 @@ class LoadBalancerEnv(gym.Env):
 
             total_reward = 0.0
 
-            W_LATENCY = 10.0      
-            W_ERRORS = 50.0      
-            W_COST = 5.0         
-            W_SATURATION = 15.0   
-            W_OVERPROVISION = 4.0 # Penaliza nodos idle 
-            
-            # Nuevos pesos para control de estabilidad
-            W_SATURATION_PREVENTIVE = 5.0 
-            W_SCALE_FRICTION = 1.0 # Fricción para evitar el chattering (serrucho)
-            W_QUEUE = 15.0          # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
-            
+            W_LATENCY = self.reward_weights["W_LATENCY"]
+            W_ERRORS = self.reward_weights["W_ERRORS"]
+            W_COST = self.reward_weights["W_COST"]
+            W_SATURATION = self.reward_weights["W_SATURATION"]
+            W_OVERPROVISION = self.reward_weights["W_OVERPROVISION"]  # Penaliza nodos idle
+
+            # Pesos para control de estabilidad
+            W_SATURATION_PREVENTIVE = self.reward_weights["W_SATURATION_PREVENTIVE"]
+            W_SCALE_FRICTION = self.reward_weights["W_SCALE_FRICTION"]  # Fricción para evitar el chattering (serrucho)
+            W_QUEUE = self.reward_weights["W_QUEUE"]  # Backpressure: penaliza la profundidad de cola (señal anticipada de saturación)
+
             if cant_active_containers == 0:
                 return -200.0
 
